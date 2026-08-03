@@ -11,6 +11,7 @@ variable, e.g. GATEWAY_CHLORINATOR__ACCESS_CODE, GATEWAY_WEB__HTTP_PORT,
 GATEWAY_MQTT__HOST (double underscore for nesting - settings.yaml groups
 keys under chlorinator/web/mqtt).
 """
+import ipaddress
 from pathlib import Path
 
 from dynaconf import Dynaconf
@@ -20,6 +21,16 @@ settings = Dynaconf(
     settings_files=["settings.yaml", ".secrets.yaml"],
     root_path=Path(__file__).parent,
 )
+
+
+def parse_allowed_networks(cidrs) -> list[ipaddress.IPv4Network | ipaddress.IPv6Network]:
+    """Turn the configured web.allowed_cidrs list into ipaddress network
+    objects, failing loudly on a typo rather than silently matching
+    nothing (or, worse, matching more than intended)."""
+    try:
+        return [ipaddress.ip_network(cidr, strict=False) for cidr in cidrs]
+    except ValueError as exc:
+        raise SystemExit(f"web.allowed_cidrs contains an invalid entry: {exc}") from exc
 
 
 def _str_or_none(value) -> str | None:
@@ -34,6 +45,12 @@ DEVICE_NAME = _str_or_none(settings.get("chlorinator.device_name", "POOL01"))
 ACCESS_CODE = _str_or_none(settings.get("chlorinator.access_code"))
 POLL_INTERVAL_SECONDS = int(settings.get("chlorinator.poll_interval_seconds", 60))
 HTTP_PORT = int(settings.get("web.http_port", 8080))
+ALLOWED_NETWORKS = parse_allowed_networks(
+    settings.get(
+        "web.allowed_cidrs",
+        ["10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "127.0.0.0/8", "::1/128"],
+    )
+)
 
 if not ACCESS_CODE:
     raise SystemExit(

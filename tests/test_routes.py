@@ -18,8 +18,11 @@ import app as app_module
 
 
 def test_app_lifecycle_and_routes_respond():
+    # TestClient's fake client address defaults to ("testclient", 50000) -
+    # not a real IP, so it'd get 403'd by restrict_to_allowed_networks()
+    # unless given a real, allowed one explicitly.
     with patch("app.BleakScanner.find_device_by_name", new=AsyncMock(return_value=None)):
-        with TestClient(app_module.app) as client:
+        with TestClient(app_module.app, client=("127.0.0.1", 12345)) as client:
             index_resp = client.get("/")
             assert index_resp.status_code == 200
             assert "Pool Chlorinator" in index_resp.text
