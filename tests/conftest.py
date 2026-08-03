@@ -3,10 +3,10 @@ import os
 # Set before anything imports config/app, so tests never depend on (or leak)
 # a real gateway/settings.yaml or .secrets.yaml - Dynaconf env var
 # overrides win over both, same as a real deployment.
-os.environ.setdefault("CHLORINATOR_ACCESS_CODE", "TESTCODE")
-os.environ.setdefault("CHLORINATOR_DEVICE_NAME", "TESTPOOL")
-os.environ.setdefault("CHLORINATOR_POLL_INTERVAL_SECONDS", "60")
-os.environ.setdefault("CHLORINATOR_HTTP_PORT", "8080")
+os.environ.setdefault("GATEWAY_CHLORINATOR__ACCESS_CODE", "TESTCODE")
+os.environ.setdefault("GATEWAY_CHLORINATOR__DEVICE_NAME", "TESTPOOL")
+os.environ.setdefault("GATEWAY_CHLORINATOR__POLL_INTERVAL_SECONDS", "60")
+os.environ.setdefault("GATEWAY_WEB__HTTP_PORT", "8080")
 
 import datetime
 from types import SimpleNamespace

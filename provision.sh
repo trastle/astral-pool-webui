@@ -34,7 +34,7 @@ if [[ ! -f "$SCRIPT_DIR/gateway/.secrets.yaml" ]]; then
   echo
   echo "WARNING: $SCRIPT_DIR/gateway/.secrets.yaml is missing (needed for the access code)."
   echo "Copy gateway/.secrets.yaml.example to gateway/.secrets.yaml and fill it in,"
-  echo "or set a CHLORINATOR_ACCESS_CODE environment variable instead."
+  echo "or set a GATEWAY_CHLORINATOR__ACCESS_CODE environment variable instead."
 fi
 
 echo

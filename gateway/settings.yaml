@@ -1,23 +1,26 @@
 # Non-secret defaults. Override per-deployment with environment variables
-# (CHLORINATOR_<NAME>, e.g. CHLORINATOR_DEVICE_NAME - see README) rather
-# than editing this file, so it stays generic across installs. The access
-# code goes in .secrets.yaml instead (see .secrets.yaml.example) - never
-# here.
-device_name: POOL01
-poll_interval_seconds: 60
-http_port: 8080
+# (GATEWAY_<SECTION>__<NAME>, e.g. GATEWAY_CHLORINATOR__DEVICE_NAME - see
+# README) rather than editing this file, so it stays generic across
+# installs. The access code goes in .secrets.yaml instead (see
+# .secrets.yaml.example) - never here.
+chlorinator:
+  device_name: POOL01
+  poll_interval_seconds: 60
+
+# Settings for the web dashboard/metrics server. More to come here later
+# (e.g. bind host, auth) - keep it namespaced rather than flat.
+web:
+  http_port: 8080
 
 # MQTT is optional - leave mqtt.host unset to run without it (dashboard and
 # /metrics keep working either way). Set these once an MQTT broker (e.g.
 # the Mosquitto add-on, if you run Home Assistant OS/Supervised) is
-# reachable. Override with CHLORINATOR_MQTT__HOST, CHLORINATOR_MQTT__PORT,
-# etc. (double underscore for nesting).
+# reachable. Override with GATEWAY_MQTT__HOST, GATEWAY_MQTT__PORT, etc.
 mqtt:
   host:
   port: 1883
   username:
   password:
-  # base_topic left unset on purpose - defaults to chlorinator/<device
-  # name, lowercased> (matching hwmaier/chlorinator-gateway's topic
-  # scheme). Only set this to override that.
+  # base_topic left unset on purpose - defaults to
+  # chlorinator/<device name, lowercased>. Only set this to override that.
   base_topic:

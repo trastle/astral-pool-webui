@@ -101,36 +101,38 @@ on the Pi:
 
 ### Configuration
 
-Configuration is layered via [Dynaconf](https://www.dynaconf.com/):
+Configuration is layered via [Dynaconf](https://www.dynaconf.com/), grouped
+into `chlorinator` (the physical device/connection), `web` (the dashboard
+server), and `mqtt` (the optional bridge):
 
 1. [`gateway/settings.yaml`](gateway/settings.yaml) - committed, non-secret
-   defaults (device name, poll interval, MQTT host/port, etc.).
+   defaults.
 2. `gateway/.secrets.yaml` - gitignored, just your access code (copy it from
    [`gateway/.secrets.yaml.example`](gateway/.secrets.yaml.example)).
 3. Environment variables - override anything from either file above, e.g.
    for containerized/systemd deployments where you'd rather not keep a
    secrets file on disk at all.
 
-Environment variables use a `CHLORINATOR_` prefix; nested `mqtt.*` keys use
-a double underscore:
+Environment variables use a `GATEWAY_` prefix, with a double underscore
+between the section and the key:
 
 | Variable | Overrides | Default |
 |---|---|---|
-| `CHLORINATOR_DEVICE_NAME` | `device_name` | `POOL01` |
-| `CHLORINATOR_ACCESS_CODE` | `access_code` | *(required)* |
-| `CHLORINATOR_POLL_INTERVAL_SECONDS` | `poll_interval_seconds` | `60` |
-| `CHLORINATOR_HTTP_PORT` | `http_port` | `8080` |
-| `CHLORINATOR_MQTT__HOST` | `mqtt.host` | *(unset)* |
-| `CHLORINATOR_MQTT__PORT` | `mqtt.port` | `1883` |
-| `CHLORINATOR_MQTT__USERNAME` / `CHLORINATOR_MQTT__PASSWORD` | `mqtt.username` / `mqtt.password` | *(unset)* |
-| `CHLORINATOR_MQTT__BASE_TOPIC` | `mqtt.base_topic` | `chlorinator/<device name, lowercased>` |
+| `GATEWAY_CHLORINATOR__DEVICE_NAME` | `chlorinator.device_name` | `POOL01` |
+| `GATEWAY_CHLORINATOR__ACCESS_CODE` | `chlorinator.access_code` | *(required)* |
+| `GATEWAY_CHLORINATOR__POLL_INTERVAL_SECONDS` | `chlorinator.poll_interval_seconds` | `60` |
+| `GATEWAY_WEB__HTTP_PORT` | `web.http_port` | `8080` |
+| `GATEWAY_MQTT__HOST` | `mqtt.host` | *(unset)* |
+| `GATEWAY_MQTT__PORT` | `mqtt.port` | `1883` |
+| `GATEWAY_MQTT__USERNAME` / `GATEWAY_MQTT__PASSWORD` | `mqtt.username` / `mqtt.password` | *(unset)* |
+| `GATEWAY_MQTT__BASE_TOPIC` | `mqtt.base_topic` | `chlorinator/<device name, lowercased>` |
 
 Leave `mqtt.host` unset to run without MQTT entirely - the app works
 standalone (dashboard + metrics) with no broker configured at all.
 
 ### Command topics (optional)
 
-If `MQTT_HOST` is set, the bridge subscribes to:
+If `mqtt.host` is set, the bridge subscribes to:
 
 - `chlorinator/<name>/action` - JSON `{"action": <int>[, ...kwargs]}`,
   matching pychlorinator's `ChlorinatorActions` enum (e.g. turning the pump
