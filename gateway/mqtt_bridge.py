@@ -15,11 +15,31 @@ mqtt_client.py publishes to. This module only does the MQTT transport; the
 actual pychlorinator write calls happen in app.py's handle_mqtt_command(),
 which this bridge invokes via a registered handler.
 
-paho-mqtt's on_message callback runs in its own background network-loop
-thread, not the asyncio event loop the rest of the app runs on - messages
-are handed off via asyncio.run_coroutine_threadsafe() using the loop
-captured when connect() runs (from the FastAPI lifespan startup, so it's
-always the real running loop).
+paho-mqtt's on_message/on_connect/on_disconnect callbacks all run on its
+own background network-loop thread, not the asyncio event loop the rest
+of the app runs on - commands are handed off via
+asyncio.run_coroutine_threadsafe() using the loop captured when connect()
+runs (from the FastAPI lifespan startup, so it's always the real running
+loop). Setting plain attributes (self.connected etc.) from that thread is
+fine without extra locking - CPython's GIL makes single attribute
+get/set atomic, and nothing here needs multi-attribute consistency.
+
+Connection resilience: connect() uses connect_async() + loop_start()
+rather than a blocking connect() call, so paho's own background thread
+handles retrying with backoff - including the *first* connection attempt
+(retry_first_connection=True is hardcoded into paho's loop_start()) - not
+just reconnects after a connection that was once established. Without
+this, a transient network blip at startup would raise out of a bare
+connect() call, and nothing would ever retry it.
+
+Re-subscribing on every (re)connect, not just the first one: subscribe()
+is only called from the on_connect callback, which paho invokes on every
+successful CONNACK - including automatic reconnects. Subscribing once in
+connect() instead would look fine initially, but a broker with clean
+sessions (the default) forgets a client's subscriptions across a drop -
+so after any reconnect, publish_state() would keep working (it doesn't
+need a subscription) while action/setup commands silently stopped
+arriving, with nothing in the logs to explain why.
 
 If MQTT_HOST isn't configured, the bridge is inert (every method is a no-op)
 so the rest of the app keeps working standalone with no broker present.
@@ -27,6 +47,7 @@ so the rest of the app keeps working standalone with no broker present.
 import asyncio
 import json
 import logging
+import time
 from typing import Awaitable, Callable
 
 import paho.mqtt.client as mqtt
@@ -94,15 +115,23 @@ class MqttBridge:
     astralpool_chlorinator fork's own config flow handles device/entity
     registration in Home Assistant.
 
-    Tolerant by design: a missing/unreachable broker never crashes the app,
-    it's logged and the bridge just stays effectively disabled.
+    Tolerant by design: a missing/unreachable broker never crashes the app;
+    connection loss (initial or mid-session) is retried automatically by
+    paho in the background, and is reflected in self.connected /
+    self.disconnect_count / self.last_connected_at for app.py's /metrics
+    to expose - see the module docstring for why.
     """
 
     def __init__(self) -> None:
         self.enabled = bool(MQTT_HOST)
+        self.connected = False
+        self.disconnect_count = 0
+        self.last_connected_at: float | None = None
         self._client: mqtt.Client | None = None
         self._loop: asyncio.AbstractEventLoop | None = None
         self._command_handler: CommandHandler | None = None
+        self._action_topic = f"{MQTT_BASE_TOPIC}/action"
+        self._setup_topic = f"{MQTT_BASE_TOPIC}/setup"
         if not self.enabled:
             log.info("MQTT_HOST not set - MQTT bridge disabled")
             return
@@ -111,6 +140,8 @@ class MqttBridge:
         if MQTT_USERNAME:
             self._client.username_pw_set(MQTT_USERNAME, MQTT_PASSWORD)
         self._client.on_message = self._on_message
+        self._client.on_connect = self._on_connect
+        self._client.on_disconnect = self._on_disconnect
 
     def set_command_handler(self, handler: CommandHandler) -> None:
         """Register the async function to call when an action/setup command
@@ -122,14 +153,32 @@ class MqttBridge:
             return
         try:
             self._loop = asyncio.get_running_loop()
-            self._client.connect(MQTT_HOST, MQTT_PORT)
-            action_topic = f"{MQTT_BASE_TOPIC}/action"
-            setup_topic = f"{MQTT_BASE_TOPIC}/setup"
-            self._client.subscribe([(action_topic, 0), (setup_topic, 0)])
+            self._client.connect_async(MQTT_HOST, MQTT_PORT)
             self._client.loop_start()
-            log.info("Connected to MQTT broker %s:%s, subscribed to %s and %s", MQTT_HOST, MQTT_PORT, action_topic, setup_topic)
+            log.info("Connecting to MQTT broker %s:%s in the background...", MQTT_HOST, MQTT_PORT)
         except Exception as exc:  # noqa: BLE001 - never let MQTT take the app down
             log.warning("MQTT connect failed (will keep running without it): %s", exc)
+
+    def _on_connect(self, client, userdata, flags, reason_code, properties=None) -> None:
+        """Runs on paho's background thread, on every successful CONNACK -
+        the first connection AND every automatic reconnect after a drop.
+        Subscribing here (not just once in connect()) is what makes
+        command handling survive a reconnect - see the module docstring."""
+        if reason_code.is_failure:
+            log.warning("MQTT connect failed: %s", reason_code)
+            return
+        self.connected = True
+        self.last_connected_at = time.time()
+        client.subscribe([(self._action_topic, 0), (self._setup_topic, 0)])
+        log.info("Connected to MQTT broker %s:%s, subscribed to %s and %s", MQTT_HOST, MQTT_PORT, self._action_topic, self._setup_topic)
+
+    def _on_disconnect(self, client, userdata, disconnect_flags, reason_code, properties=None) -> None:
+        """Runs on paho's background thread. Covers both an unexpected drop
+        and our own disconnect() below - paho retries the former on its
+        own; either way this keeps self.connected accurate for /metrics."""
+        self.connected = False
+        self.disconnect_count += 1
+        log.warning("Disconnected from MQTT broker: %s", reason_code)
 
     def _on_message(self, client, userdata, msg) -> None:
         """Runs on paho's background network thread - hand off to the
