@@ -108,6 +108,32 @@ def test_bridge_connects_and_publishes_when_broker_configured(monkeypatch, sampl
     asyncio.run(run())
 
 
+def test_bridge_sets_username_and_password_when_configured(monkeypatch):
+    """username_pw_set() happens in __init__, not connect() - covering it
+    separately since every other test explicitly sets MQTT_USERNAME=None
+    and never exercises this branch."""
+    monkeypatch.setattr("mqtt_bridge.MQTT_HOST", "test-broker")
+    monkeypatch.setattr("mqtt_bridge.MQTT_USERNAME", "pool")
+    monkeypatch.setattr("mqtt_bridge.MQTT_PASSWORD", "hunter2")
+
+    fake_client = MagicMock()
+    with patch("mqtt_bridge.mqtt.Client", return_value=fake_client):
+        MqttBridge()
+
+    fake_client.username_pw_set.assert_called_once_with("pool", "hunter2")
+
+
+def test_bridge_skips_username_pw_set_when_no_username_configured(monkeypatch):
+    monkeypatch.setattr("mqtt_bridge.MQTT_HOST", "test-broker")
+    monkeypatch.setattr("mqtt_bridge.MQTT_USERNAME", None)
+
+    fake_client = MagicMock()
+    with patch("mqtt_bridge.mqtt.Client", return_value=fake_client):
+        MqttBridge()
+
+    fake_client.username_pw_set.assert_not_called()
+
+
 def test_bridge_connect_failure_is_swallowed_not_raised(monkeypatch):
     monkeypatch.setattr("mqtt_bridge.MQTT_HOST", "unreachable-broker")
 
