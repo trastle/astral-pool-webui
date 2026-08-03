@@ -37,10 +37,17 @@ not just sensors).
   at a glance, plus pool info and the chlorinator's own built-in pump
   schedule.
 - **Prometheus metrics** (`/metrics`) - every numeric/boolean/categorical
-  field, for your own dashboards/alerting.
+  field, for your own dashboards/alerting. Also includes MQTT connection
+  health (`chlorinator_mqtt_enabled`/`_connected`/`_disconnect_count`/
+  `_last_connected_timestamp_seconds`) - useful for alerting if the bridge
+  is enabled but not actually connected.
 - **MQTT** - publishes full state as JSON on `chlorinator/<name>/state`
   every poll; optionally accepts commands on `chlorinator/<name>/action` and
   `chlorinator/<name>/setup` (see below) to actually control the device.
+  Reconnects automatically (with backoff) after a network blip, including
+  the very first connection attempt at startup, and re-subscribes to the
+  action/setup topics on every reconnect so command handling doesn't
+  silently stop working after a drop.
 - **Help page** (`/help`) - links to AstralPool's own manual/support pages,
   plus a glossary of what each dashboard field means.
 - Read-only by default. Command handling only does anything once you've

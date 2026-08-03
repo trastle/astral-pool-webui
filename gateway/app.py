@@ -134,6 +134,26 @@ g_last_success_timestamp = Gauge(
     "Unix timestamp of the last successful poll",
     registry=registry,
 )
+g_mqtt_enabled = Gauge(
+    "chlorinator_mqtt_enabled",
+    "1 if MQTT is configured (mqtt.host set) at all, else 0",
+    registry=registry,
+)
+g_mqtt_connected = Gauge(
+    "chlorinator_mqtt_connected",
+    "1 if currently connected to the MQTT broker, else 0 (only meaningful when enabled=1)",
+    registry=registry,
+)
+g_mqtt_disconnect_count = Gauge(
+    "chlorinator_mqtt_disconnect_count",
+    "Number of MQTT disconnects (including our own on shutdown) since this process started",
+    registry=registry,
+)
+g_mqtt_last_connected_timestamp = Gauge(
+    "chlorinator_mqtt_last_connected_timestamp_seconds",
+    "Unix timestamp MQTT last (re)connected, or 0 if never",
+    registry=registry,
+)
 
 state_lock = asyncio.Lock()
 # Shared between the periodic poll and MQTT command handling below, so a
@@ -613,6 +633,13 @@ async def help_page() -> str:
 
 @app.get("/metrics")
 async def metrics() -> Response:
+    # Read live off mqtt_bridge rather than only updating at poll time -
+    # a connect/disconnect can happen at any point between polls, and this
+    # is a cheap plain-attribute read, not I/O.
+    g_mqtt_enabled.set(1 if mqtt_bridge.enabled else 0)
+    g_mqtt_connected.set(1 if mqtt_bridge.connected else 0)
+    g_mqtt_disconnect_count.set(mqtt_bridge.disconnect_count)
+    g_mqtt_last_connected_timestamp.set(mqtt_bridge.last_connected_at or 0)
     return Response(content=generate_latest(registry), media_type=CONTENT_TYPE_LATEST)
 
 

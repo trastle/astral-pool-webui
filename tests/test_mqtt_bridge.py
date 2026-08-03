@@ -5,6 +5,14 @@ from unittest.mock import MagicMock, patch
 from mqtt_bridge import MqttBridge, build_state_payload
 
 
+def success_reason_code():
+    return MagicMock(is_failure=False)
+
+
+def failure_reason_code():
+    return MagicMock(is_failure=True)
+
+
 def test_build_state_payload_uses_real_enum_values(sample_data):
     """mode/pump_speed/chlorine_control_status must be raw ints (not our own
     humanized strings) - the astralpool_chlorinator fork's coordinator
@@ -69,11 +77,21 @@ def test_bridge_connects_and_publishes_when_broker_configured(monkeypatch, sampl
             # connect() calls asyncio.get_running_loop() (to dispatch
             # commands later), so this needs a real running loop.
             bridge.connect()
-            fake_client.connect.assert_called_once_with("test-broker", 1883)
+            # connect_async(), not connect() - see the module docstring on
+            # why the blocking call would defeat retrying a bad first
+            # attempt. Actual subscribing happens in on_connect, invoked
+            # below as paho itself would once a CONNACK arrives.
+            fake_client.connect_async.assert_called_once_with("test-broker", 1883)
+            fake_client.loop_start.assert_called_once()
+            fake_client.subscribe.assert_not_called()
+            assert bridge.connected is False
+
+            bridge._on_connect(fake_client, None, MagicMock(), success_reason_code())
             fake_client.subscribe.assert_called_once_with(
                 [("chlorinator/testpool/action", 0), ("chlorinator/testpool/setup", 0)]
             )
-            fake_client.loop_start.assert_called_once()
+            assert bridge.connected is True
+            assert bridge.last_connected_at is not None
             # No discovery publish anymore - just the connection itself.
             fake_client.publish.assert_not_called()
 
@@ -94,7 +112,7 @@ def test_bridge_connect_failure_is_swallowed_not_raised(monkeypatch):
     monkeypatch.setattr("mqtt_bridge.MQTT_HOST", "unreachable-broker")
 
     fake_client = MagicMock()
-    fake_client.connect.side_effect = OSError("connection refused")
+    fake_client.connect_async.side_effect = OSError("connection refused")
 
     async def run():
         with patch("mqtt_bridge.mqtt.Client", return_value=fake_client):
@@ -102,6 +120,50 @@ def test_bridge_connect_failure_is_swallowed_not_raised(monkeypatch):
             bridge.connect()  # must not raise - app should keep running without MQTT
 
     asyncio.run(run())
+
+
+def test_on_connect_resubscribes_on_a_reconnect_not_just_the_first_time(monkeypatch):
+    """The whole point of subscribing from on_connect rather than once in
+    connect(): a broker with clean sessions (the default) forgets
+    subscriptions across a drop, so every reconnect needs to redo it too."""
+    monkeypatch.setattr("mqtt_bridge.MQTT_HOST", "test-broker")
+    fake_client = MagicMock()
+    with patch("mqtt_bridge.mqtt.Client", return_value=fake_client):
+        bridge = MqttBridge()
+        bridge._on_connect(fake_client, None, MagicMock(), success_reason_code())
+        bridge._on_disconnect(fake_client, None, MagicMock(), MagicMock())
+        bridge._on_connect(fake_client, None, MagicMock(), success_reason_code())
+
+    assert fake_client.subscribe.call_count == 2
+    assert bridge.connected is True
+
+
+def test_on_connect_with_failure_reason_code_does_not_subscribe_or_mark_connected(monkeypatch):
+    monkeypatch.setattr("mqtt_bridge.MQTT_HOST", "test-broker")
+    fake_client = MagicMock()
+    with patch("mqtt_bridge.mqtt.Client", return_value=fake_client):
+        bridge = MqttBridge()
+        bridge._on_connect(fake_client, None, MagicMock(), failure_reason_code())
+
+    fake_client.subscribe.assert_not_called()
+    assert bridge.connected is False
+    assert bridge.last_connected_at is None
+
+
+def test_on_disconnect_marks_disconnected_and_counts_it(monkeypatch):
+    monkeypatch.setattr("mqtt_bridge.MQTT_HOST", "test-broker")
+    fake_client = MagicMock()
+    with patch("mqtt_bridge.mqtt.Client", return_value=fake_client):
+        bridge = MqttBridge()
+        bridge._on_connect(fake_client, None, MagicMock(), success_reason_code())
+        assert bridge.disconnect_count == 0
+
+        bridge._on_disconnect(fake_client, None, MagicMock(), MagicMock())
+        assert bridge.connected is False
+        assert bridge.disconnect_count == 1
+
+        bridge._on_disconnect(fake_client, None, MagicMock(), MagicMock())
+        assert bridge.disconnect_count == 2
 
 
 def test_on_message_dispatches_action_and_setup_by_topic_suffix(monkeypatch):

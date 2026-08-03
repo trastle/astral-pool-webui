@@ -1,8 +1,10 @@
+import asyncio
 import re
+from unittest.mock import MagicMock, patch
 
 from prometheus_client import generate_latest
 
-from app import registry, update_metrics
+from app import metrics, registry, update_metrics
 
 
 def get_metric_value(text: str, name: str) -> float:
@@ -47,3 +49,37 @@ def test_categorical_state_exposed_as_info_labels(sample_data):
     assert 'mode="Auto"' in text
     assert 'chlorine_control_status="Low"' in text
     assert 'acid_dosing_inhibit_status="InhibitedIndefinitely"' in text
+
+
+def route_metrics_text(fake_bridge) -> str:
+    """Unlike update_metrics()'s gauges, the MQTT gauges are set live in
+    the /metrics route itself (not just once per poll) - see app.py."""
+    with patch("app.mqtt_bridge", fake_bridge):
+        response = asyncio.run(metrics())
+    return response.body.decode()
+
+
+def test_mqtt_metrics_reflect_disabled_bridge():
+    fake_bridge = MagicMock(enabled=False, connected=False, disconnect_count=0, last_connected_at=None)
+    text = route_metrics_text(fake_bridge)
+    assert get_metric_value(text, "chlorinator_mqtt_enabled") == 0.0
+    assert get_metric_value(text, "chlorinator_mqtt_connected") == 0.0
+    assert get_metric_value(text, "chlorinator_mqtt_last_connected_timestamp_seconds") == 0.0
+
+
+def test_mqtt_metrics_reflect_connected_bridge():
+    fake_bridge = MagicMock(enabled=True, connected=True, disconnect_count=2, last_connected_at=1700000000.0)
+    text = route_metrics_text(fake_bridge)
+    assert get_metric_value(text, "chlorinator_mqtt_enabled") == 1.0
+    assert get_metric_value(text, "chlorinator_mqtt_connected") == 1.0
+    assert get_metric_value(text, "chlorinator_mqtt_disconnect_count") == 2.0
+    assert get_metric_value(text, "chlorinator_mqtt_last_connected_timestamp_seconds") == 1700000000.0
+
+
+def test_mqtt_metrics_reflect_enabled_but_currently_disconnected():
+    """The gap this whole PR closes: enabled=1 + connected=0 is exactly
+    the "should be up but isn't" state an alert would fire on."""
+    fake_bridge = MagicMock(enabled=True, connected=False, disconnect_count=1, last_connected_at=1700000000.0)
+    text = route_metrics_text(fake_bridge)
+    assert get_metric_value(text, "chlorinator_mqtt_enabled") == 1.0
+    assert get_metric_value(text, "chlorinator_mqtt_connected") == 0.0
