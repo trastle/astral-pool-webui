@@ -50,14 +50,25 @@ fi
 PROJECT_NAME="$(basename "$SCRIPT_DIR")"
 TARGET_DIR="$SERVICE_HOME/$PROJECT_NAME"
 
+# Tracks whether anything actually changed, so a no-op re-run (e.g.
+# triggered twice by mistake, or by something that calls this on a
+# schedule) skips the restart at the end instead of bouncing the service
+# for nothing.
+CHANGED=false
+
 if [[ "$SCRIPT_DIR" != "$TARGET_DIR" ]]; then
   echo "== Copying project into $TARGET_DIR (owned by $SERVICE_USER) =="
   # --delete so a file removed from the repo (e.g. a renamed/retired
   # module) doesn't linger in $TARGET_DIR forever across redeploys - the
   # excludes below are also excluded from deletion, so this never touches
-  # venv/ or __pycache__/.
-  sudo rsync -a --delete --exclude venv --exclude __pycache__ --exclude .pytest_cache \
-    "$SCRIPT_DIR/" "$TARGET_DIR/"
+  # venv/ or __pycache__/. -i itemizes what actually changed, so a
+  # byte-for-byte-identical rerun produces no output at all.
+  RSYNC_CHANGES="$(sudo rsync -ai --delete --exclude venv --exclude __pycache__ --exclude .pytest_cache \
+    "$SCRIPT_DIR/" "$TARGET_DIR/")"
+  if [[ -n "$RSYNC_CHANGES" ]]; then
+    echo "$RSYNC_CHANGES"
+    CHANGED=true
+  fi
   sudo chown -R "$SERVICE_USER:$SERVICE_USER" "$TARGET_DIR"
   SCRIPT_DIR="$TARGET_DIR"
 fi
@@ -87,8 +98,9 @@ if [[ ! -f "$SCRIPT_DIR/gateway/.secrets.yaml" ]]; then
   echo "those is done."
 fi
 
-echo "== Installing and starting the systemd service =="
-sudo tee /etc/systemd/system/chlorinator-gateway.service > /dev/null <<EOF
+echo "== Installing the systemd service =="
+UNIT_PATH="/etc/systemd/system/chlorinator-gateway.service"
+NEW_UNIT="$(cat <<EOF
 [Unit]
 Description=Pool chlorinator web UI, Prometheus exporter, and MQTT bridge
 After=bluetooth.target network-online.target
@@ -105,9 +117,22 @@ RestartSec=10
 [Install]
 WantedBy=multi-user.target
 EOF
-sudo systemctl daemon-reload
+)"
+# Unit files are world-readable by default, so comparing without sudo is
+# fine - only writing needs it.
+if [[ ! -f "$UNIT_PATH" ]] || [[ "$NEW_UNIT" != "$(cat "$UNIT_PATH")" ]]; then
+  echo "$NEW_UNIT" | sudo tee "$UNIT_PATH" > /dev/null
+  sudo systemctl daemon-reload
+  CHANGED=true
+fi
 sudo systemctl enable chlorinator-gateway
-sudo systemctl restart chlorinator-gateway
+
+if [[ "$CHANGED" == true ]] || ! systemctl is-active --quiet chlorinator-gateway; then
+  echo "== Starting/restarting the service (code, deps, or unit changed - or it wasn't running) =="
+  sudo systemctl restart chlorinator-gateway
+else
+  echo "== Nothing changed and the service is already running - leaving it alone =="
+fi
 
 echo
 echo "Done. Service status:"
