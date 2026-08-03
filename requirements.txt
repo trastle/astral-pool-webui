@@ -1,0 +1,7 @@
+bleak
+pychlorinator
+paho-mqtt>=2,<3
+fastapi
+uvicorn
+prometheus_client
+python-dotenv
