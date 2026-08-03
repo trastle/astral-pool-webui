@@ -72,8 +72,8 @@ not just sensors).
 ```bash
 git clone <this-repo-url>
 cd astral-pool-webui
-cp gateway/.env.example gateway/.env
-# edit gateway/.env: set CHLORINATOR_ACCESS_CODE at minimum
+cp gateway/.secrets.yaml.example gateway/.secrets.yaml
+# edit gateway/.secrets.yaml: set your real access_code
 bash provision.sh
 ```
 
@@ -101,26 +101,38 @@ on the Pi:
 
 ### Configuration
 
-All configuration is via environment variables (or `gateway/.env` - see
-[`gateway/.env.example`](gateway/.env.example)):
+Configuration is layered via [Dynaconf](https://www.dynaconf.com/), grouped
+into `chlorinator` (the physical device/connection), `web` (the dashboard
+server), and `mqtt` (the optional bridge):
 
-| Variable | Default | Notes |
+1. [`gateway/settings.yaml`](gateway/settings.yaml) - committed, non-secret
+   defaults.
+2. `gateway/.secrets.yaml` - gitignored, just your access code (copy it from
+   [`gateway/.secrets.yaml.example`](gateway/.secrets.yaml.example)).
+3. Environment variables - override anything from either file above, e.g.
+   for containerized/systemd deployments where you'd rather not keep a
+   secrets file on disk at all.
+
+Environment variables use a `GATEWAY_` prefix, with a double underscore
+between the section and the key:
+
+| Variable | Overrides | Default |
 |---|---|---|
-| `CHLORINATOR_DEVICE_NAME` | `POOL01` | BLE advertised name of your chlorinator |
-| `CHLORINATOR_ACCESS_CODE` | *(required)* | Bluetooth access code from the phone app |
-| `POLL_INTERVAL_SECONDS` | `60` | How often to poll over BLE |
-| `HTTP_PORT` | `8080` | Web UI / metrics port |
-| `MQTT_HOST` | *(unset)* | Leave unset to run without MQTT |
-| `MQTT_PORT` | `1883` | |
-| `MQTT_USERNAME` / `MQTT_PASSWORD` | *(unset)* | |
-| `MQTT_BASE_TOPIC` | `chlorinator/<device name, lowercased>` | |
+| `GATEWAY_CHLORINATOR__DEVICE_NAME` | `chlorinator.device_name` | `POOL01` |
+| `GATEWAY_CHLORINATOR__ACCESS_CODE` | `chlorinator.access_code` | *(required)* |
+| `GATEWAY_CHLORINATOR__POLL_INTERVAL_SECONDS` | `chlorinator.poll_interval_seconds` | `60` |
+| `GATEWAY_WEB__HTTP_PORT` | `web.http_port` | `8080` |
+| `GATEWAY_MQTT__HOST` | `mqtt.host` | *(unset)* |
+| `GATEWAY_MQTT__PORT` | `mqtt.port` | `1883` |
+| `GATEWAY_MQTT__USERNAME` / `GATEWAY_MQTT__PASSWORD` | `mqtt.username` / `mqtt.password` | *(unset)* |
+| `GATEWAY_MQTT__BASE_TOPIC` | `mqtt.base_topic` | `chlorinator/<device name, lowercased>` |
 
-The app works standalone (dashboard + metrics) with no MQTT broker
-configured at all - MQTT is purely additive.
+Leave `mqtt.host` unset to run without MQTT entirely - the app works
+standalone (dashboard + metrics) with no broker configured at all.
 
 ### Command topics (optional)
 
-If `MQTT_HOST` is set, the bridge subscribes to:
+If `mqtt.host` is set, the bridge subscribes to:
 
 - `chlorinator/<name>/action` - JSON `{"action": <int>[, ...kwargs]}`,
   matching pychlorinator's `ChlorinatorActions` enum (e.g. turning the pump

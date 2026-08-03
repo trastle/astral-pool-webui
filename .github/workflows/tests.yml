@@ -21,4 +21,4 @@ jobs:
 
       - run: pytest -q
         env:
-          CHLORINATOR_ACCESS_CODE: test
+          GATEWAY_CHLORINATOR__ACCESS_CODE: test
