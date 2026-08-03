@@ -77,20 +77,49 @@ cp gateway/.secrets.yaml.example gateway/.secrets.yaml
 bash provision.sh
 ```
 
-`provision.sh` sets up Bluetooth, creates a venv, and installs dependencies.
-It's safe to re-run any time.
+`provision.sh` sets up Bluetooth, creates a dedicated unprivileged
+`chlorinator-gateway` system account, copies the project into that
+account's home directory (e.g. `/home/chlorinator-gateway/astral-pool-webui`
+- leaving your original checkout alone), and installs/starts it as a
+systemd service running as that account. It's safe to re-run any time,
+including after a `git pull`, to redeploy code changes - it copies the
+update over and restarts the service.
 
-Run it directly to try it out:
+Running it as its own account (rather than whichever user happens to run
+the script) means a bug or compromised dependency in the BLE/MQTT/web
+stack can't touch anything outside that account's own home directory. One
+consequence: your regular login won't automatically be able to read its
+logs or files (everything logs to the systemd journal - see `journalctl -u
+chlorinator-gateway` - there's no separate log file). To grant another
+admin account read-only access for troubleshooting, without giving it
+broad sudo:
 
 ```bash
+sudo usermod -aG systemd-journal <your-user>   # read logs without sudo
+sudo usermod -aG chlorinator-gateway <your-user>
+sudo chmod 750 /home/chlorinator-gateway        # let that group traverse/read
+```
+
+`gateway/.secrets.yaml` stays owner-only (`chmod 600`, no group bit) either
+way, so this doesn't expose the access code or any MQTT credentials - only
+code, non-secret config, and logs become readable. Group membership is
+picked up on next login, not retroactively for an already-open session.
+
+To try the app out directly first, without provisioning anything (this
+venv is just for trying it out - `provision.sh` manages its own,
+separately, under the service account's home directory):
+
+```bash
+python3 -m venv venv
 source venv/bin/activate
+pip install -r requirements.txt
 python3 gateway/app.py
 # dashboard at http://<host>:8080/
 ```
 
-Or install it as a systemd service so it survives reboots - see
-[`systemd/chlorinator-gateway.service`](systemd/chlorinator-gateway.service)
-(edit the `User`/paths for your setup first).
+(If you want to hand-install the systemd unit instead of using
+`provision.sh`, see [`systemd/chlorinator-gateway.service`](systemd/chlorinator-gateway.service)
+for a reference copy - adjust `User`/paths to match your setup first.)
 
 To deploy from a separate dev machine over SSH instead of working directly
 on the Pi:
@@ -107,8 +136,16 @@ server), and `mqtt` (the optional bridge):
 
 1. [`gateway/settings.yaml`](gateway/settings.yaml) - committed, non-secret
    defaults.
-2. `gateway/.secrets.yaml` - gitignored, just your access code (copy it from
-   [`gateway/.secrets.yaml.example`](gateway/.secrets.yaml.example)).
+2. `gateway/.secrets.yaml` - gitignored (copy it from
+   [`gateway/.secrets.yaml.example`](gateway/.secrets.yaml.example)). Despite
+   the name, this is really "any per-install override, not just secrets" -
+   put your access code here, but also anything else specific to one
+   install (e.g. `mqtt.host`) that you don't want to set via an environment
+   variable. `provision.sh` copies it along with the rest of the project
+   into the service account's home directory and preserves it across
+   redeploys - a value set only in a hand-edited systemd unit or shell
+   session will *not* survive the next `provision.sh` run, since that
+   regenerates the unit from scratch.
 3. Environment variables - override anything from either file above, e.g.
    for containerized/systemd deployments where you'd rather not keep a
    secrets file on disk at all.

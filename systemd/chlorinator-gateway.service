@@ -3,17 +3,20 @@ Description=Pool chlorinator web UI, Prometheus exporter, and MQTT bridge
 After=bluetooth.target network-online.target
 Wants=bluetooth.target network-online.target
 
-# Example unit - adjust User/WorkingDirectory/ExecStart to match where you
-# deployed this project and which user should run it, then:
+# Reference copy only - provision.sh generates and installs a unit like
+# this automatically (with the real deployment path baked in) as part of
+# provisioning, running as the dedicated "chlorinator-gateway" service
+# account it creates. Only use this file directly for a fully manual
+# install, after adjusting User/WorkingDirectory/ExecStart to match:
 #   sudo cp chlorinator-gateway.service /etc/systemd/system/
 #   sudo systemctl daemon-reload
 #   sudo systemctl enable --now chlorinator-gateway
 
 [Service]
 Type=simple
-User=pi
-WorkingDirectory=/home/pi/astral-pool-webui/gateway
-ExecStart=/home/pi/astral-pool-webui/venv/bin/python3 /home/pi/astral-pool-webui/gateway/app.py
+User=chlorinator-gateway
+WorkingDirectory=/home/chlorinator-gateway/astral-pool-webui/gateway
+ExecStart=/home/chlorinator-gateway/astral-pool-webui/venv/bin/python3 /home/chlorinator-gateway/astral-pool-webui/gateway/app.py
 Restart=on-failure
 RestartSec=10
 

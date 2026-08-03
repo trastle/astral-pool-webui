@@ -27,7 +27,7 @@ if [[ -n "$SSH_KEY" ]]; then
 fi
 
 echo "== Syncing this project to $REMOTE_HOST:$REMOTE_DIR =="
-rsync -av --exclude venv --exclude __pycache__ --exclude .git --exclude .env \
+rsync -av --exclude venv --exclude __pycache__ --exclude .git --exclude .secrets.yaml \
   -e "ssh ${SSH_OPTS[*]}" \
   "$SCRIPT_DIR/" "$REMOTE_HOST:$REMOTE_DIR/"
 
