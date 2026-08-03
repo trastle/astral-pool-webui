@@ -167,13 +167,17 @@ between the section and the key:
 | `GATEWAY_CHLORINATOR__POLL_INTERVAL_SECONDS` | `chlorinator.poll_interval_seconds` | `60` |
 | `GATEWAY_WEB__HTTP_PORT` | `web.http_port` | `8080` |
 | `GATEWAY_WEB__ALLOWED_CIDRS` | `web.allowed_cidrs` | private/loopback ranges - see below |
+| `GATEWAY_MQTT__ENABLED` | `mqtt.enabled` | `true` |
 | `GATEWAY_MQTT__HOST` | `mqtt.host` | *(unset)* |
 | `GATEWAY_MQTT__PORT` | `mqtt.port` | `1883` |
 | `GATEWAY_MQTT__USERNAME` / `GATEWAY_MQTT__PASSWORD` | `mqtt.username` / `mqtt.password` | *(unset)* |
 | `GATEWAY_MQTT__BASE_TOPIC` | `mqtt.base_topic` | `chlorinator/<device name, lowercased>` |
 
 Leave `mqtt.host` unset to run without MQTT entirely - the app works
-standalone (dashboard + metrics) with no broker configured at all.
+standalone (dashboard + metrics) with no broker configured at all. If
+you've already got a host/port/credentials configured and just want to
+turn MQTT off temporarily without losing them, set `mqtt.enabled: false`
+(or `GATEWAY_MQTT__ENABLED=false`) instead of clearing `mqtt.host`.
 
 ### Restricting which networks can reach the dashboard
 

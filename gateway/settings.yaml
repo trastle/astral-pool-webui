@@ -34,6 +34,13 @@ web:
 # the Mosquitto add-on, if you run Home Assistant OS/Supervised) is
 # reachable. Override with GATEWAY_MQTT__HOST, GATEWAY_MQTT__PORT, etc.
 mqtt:
+  # On by default - set to false to disable MQTT entirely without losing
+  # host/port/credentials already configured below (e.g. to temporarily
+  # rule MQTT out while troubleshooting something else). Leaving mqtt.host
+  # unset has the same practical effect if you'd rather not configure MQTT
+  # at all, but this is the explicit on/off switch. Override with
+  # GATEWAY_MQTT__ENABLED.
+  enabled: true
   host:
   port: 1883
   username:

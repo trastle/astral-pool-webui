@@ -41,8 +41,9 @@ so after any reconnect, publish_state() would keep working (it doesn't
 need a subscription) while action/setup commands silently stopped
 arriving, with nothing in the logs to explain why.
 
-If MQTT_HOST isn't configured, the bridge is inert (every method is a no-op)
-so the rest of the app keeps working standalone with no broker present.
+If MQTT_HOST isn't configured, or MQTT_ENABLED is explicitly false, the
+bridge is inert (every method is a no-op) so the rest of the app keeps
+working standalone with no broker present.
 """
 import asyncio
 import json
@@ -52,7 +53,7 @@ from typing import Awaitable, Callable
 
 import paho.mqtt.client as mqtt
 
-from config import MQTT_BASE_TOPIC, MQTT_HOST, MQTT_PASSWORD, MQTT_PORT, MQTT_USERNAME
+from config import MQTT_BASE_TOPIC, MQTT_ENABLED, MQTT_HOST, MQTT_PASSWORD, MQTT_PORT, MQTT_USERNAME
 from quirks import decode_pool_volume
 
 log = logging.getLogger("mqtt_bridge")
@@ -123,7 +124,7 @@ class MqttBridge:
     """
 
     def __init__(self) -> None:
-        self.enabled = bool(MQTT_HOST)
+        self.enabled = MQTT_ENABLED and bool(MQTT_HOST)
         self.connected = False
         self.disconnect_count = 0
         self.last_connected_at: float | None = None
@@ -133,7 +134,10 @@ class MqttBridge:
         self._action_topic = f"{MQTT_BASE_TOPIC}/action"
         self._setup_topic = f"{MQTT_BASE_TOPIC}/setup"
         if not self.enabled:
-            log.info("MQTT_HOST not set - MQTT bridge disabled")
+            if not MQTT_ENABLED:
+                log.info("MQTT explicitly disabled (mqtt.enabled=false) - MQTT bridge disabled")
+            else:
+                log.info("MQTT_HOST not set - MQTT bridge disabled")
             return
 
         self._client = mqtt.Client(callback_api_version=mqtt.CallbackAPIVersion.VERSION2)

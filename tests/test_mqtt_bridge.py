@@ -63,6 +63,30 @@ def test_bridge_disabled_when_no_broker_configured(monkeypatch):
     bridge.disconnect()
 
 
+def test_bridge_disabled_when_explicitly_disabled_even_with_host_configured(monkeypatch):
+    """mqtt.enabled=false should win even if a host/port/credentials are
+    still configured - the whole point is disabling without losing them."""
+    monkeypatch.setattr("mqtt_bridge.MQTT_HOST", "test-broker")
+    monkeypatch.setattr("mqtt_bridge.MQTT_ENABLED", False)
+
+    fake_client = MagicMock()
+    with patch("mqtt_bridge.mqtt.Client", return_value=fake_client):
+        bridge = MqttBridge()
+        assert bridge.enabled is False
+        bridge.connect()
+
+    fake_client.connect_async.assert_not_called()
+
+
+def test_bridge_enabled_by_default_when_host_configured(monkeypatch):
+    """mqtt.enabled defaults to true - only MQTT_HOST determines whether
+    the bridge is enabled unless something explicitly overrides it."""
+    monkeypatch.setattr("mqtt_bridge.MQTT_HOST", "test-broker")
+    monkeypatch.setattr("mqtt_bridge.MQTT_ENABLED", True)
+    with patch("mqtt_bridge.mqtt.Client", return_value=MagicMock()):
+        assert MqttBridge().enabled is True
+
+
 def test_bridge_connects_and_publishes_when_broker_configured(monkeypatch, sample_data):
     monkeypatch.setattr("mqtt_bridge.MQTT_HOST", "test-broker")
     monkeypatch.setattr("mqtt_bridge.MQTT_USERNAME", None)

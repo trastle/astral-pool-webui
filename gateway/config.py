@@ -60,7 +60,9 @@ if not ACCESS_CODE:
 
 # MQTT is optional - unlike ACCESS_CODE, there's no SystemExit if unset.
 # The app should keep working standalone (dashboard/metrics) with no broker
-# configured; the MQTT bridge just stays disabled until MQTT_HOST is set.
+# configured; the MQTT bridge just stays disabled until MQTT_HOST is set,
+# or if MQTT_ENABLED is explicitly false regardless of MQTT_HOST.
+MQTT_ENABLED = bool(settings.get("mqtt.enabled", True))
 MQTT_HOST = _str_or_none(settings.get("mqtt.host"))
 MQTT_PORT = int(settings.get("mqtt.port", 1883))
 MQTT_USERNAME = _str_or_none(settings.get("mqtt.username"))
