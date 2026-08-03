@@ -20,9 +20,14 @@ own background network-loop thread, not the asyncio event loop the rest
 of the app runs on - commands are handed off via
 asyncio.run_coroutine_threadsafe() using the loop captured when connect()
 runs (from the FastAPI lifespan startup, so it's always the real running
-loop). Setting plain attributes (self.connected etc.) from that thread is
-fine without extra locking - CPython's GIL makes single attribute
-get/set atomic, and nothing here needs multi-attribute consistency.
+loop). Updating self.connected/self.disconnect_count/self.last_connected_at
+from that thread needs no extra locking, but not because those ops are
+individually atomic under the GIL - self.disconnect_count += 1 is a
+read-modify-write, which the GIL does NOT make atomic against a
+concurrent writer. It's safe here because paho only ever runs one
+background thread, so there's exactly one writer for these attributes,
+ever; a second writer (e.g. handling reconnect logic on a different
+thread) would need real locking, not this reasoning.
 
 Connection resilience: connect() uses connect_async() + loop_start()
 rather than a blocking connect() call, so paho's own background thread
