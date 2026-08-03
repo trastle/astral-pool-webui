@@ -52,7 +52,11 @@ TARGET_DIR="$SERVICE_HOME/$PROJECT_NAME"
 
 if [[ "$SCRIPT_DIR" != "$TARGET_DIR" ]]; then
   echo "== Copying project into $TARGET_DIR (owned by $SERVICE_USER) =="
-  sudo rsync -a --exclude venv --exclude __pycache__ --exclude .pytest_cache \
+  # --delete so a file removed from the repo (e.g. a renamed/retired
+  # module) doesn't linger in $TARGET_DIR forever across redeploys - the
+  # excludes below are also excluded from deletion, so this never touches
+  # venv/ or __pycache__/.
+  sudo rsync -a --delete --exclude venv --exclude __pycache__ --exclude .pytest_cache \
     "$SCRIPT_DIR/" "$TARGET_DIR/"
   sudo chown -R "$SERVICE_USER:$SERVICE_USER" "$TARGET_DIR"
   SCRIPT_DIR="$TARGET_DIR"
