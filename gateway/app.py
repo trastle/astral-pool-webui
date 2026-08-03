@@ -586,7 +586,10 @@ async def lifespan(app: FastAPI):
     mqtt_bridge.disconnect()
 
 
-def _client_allowed(host: str | None, networks) -> bool:
+def _client_allowed(
+    host: str | None,
+    networks: list[ipaddress.IPv4Network | ipaddress.IPv6Network],
+) -> bool:
     """Is this client's source address within one of the configured
     allowed networks? Used to keep the dashboard/metrics off the public
     internet if this port ever gets accidentally exposed - see
