@@ -1,12 +1,12 @@
 import os
 
 # Set before anything imports config/app, so tests never depend on (or leak)
-# the real .env - load_dotenv() defaults to not overriding already-set
-# env vars, so these win even if a real .env is present.
+# a real gateway/settings.yaml or .secrets.yaml - Dynaconf env var
+# overrides win over both, same as a real deployment.
 os.environ.setdefault("CHLORINATOR_ACCESS_CODE", "TESTCODE")
 os.environ.setdefault("CHLORINATOR_DEVICE_NAME", "TESTPOOL")
-os.environ.setdefault("POLL_INTERVAL_SECONDS", "60")
-os.environ.setdefault("HTTP_PORT", "8080")
+os.environ.setdefault("CHLORINATOR_POLL_INTERVAL_SECONDS", "60")
+os.environ.setdefault("CHLORINATOR_HTTP_PORT", "8080")
 
 import datetime
 from types import SimpleNamespace

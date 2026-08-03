@@ -4,11 +4,13 @@ __pycache__/
 .pytest_cache/
 .coverage
 
-# Anything config/secret-shaped - never commit real values. .env.example is
-# the one intentional exception (template only, no real values).
+# Anything config/secret-shaped - never commit real values.
+# .secrets.yaml.example is the one intentional exception (template only,
+# no real values).
 .env
 .env.*
-!.env.example
+.secrets.yaml
+!.secrets.yaml.example
 *.local
 secrets.*
 credentials.*
