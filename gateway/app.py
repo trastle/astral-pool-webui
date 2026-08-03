@@ -14,11 +14,19 @@ Every HTTP route is gated by restrict_to_allowed_networks() below, which
 403s any request whose source address isn't in config.ALLOWED_NETWORKS
 (private/loopback ranges by default - see settings.yaml's web.allowed_cidrs).
 
+The dashboard has no templating engine (no auto-escaping), so anywhere a
+device-sourced value (not one of our own fixed strings/CSS classes) gets
+embedded in the rendered HTML, it goes through html.escape() first -
+defense-in-depth against a rogue/spoofed BLE device or a parser
+regression, not because pychlorinator is expected to misbehave in normal
+operation.
+
 Run directly (venv activated) or via the systemd/chlorinator-gateway.service
 unit.
 """
 import asyncio
 import contextlib
+import html
 import ipaddress
 import logging
 import re
@@ -392,12 +400,12 @@ def render_cards(data: dict) -> str:
         dosing_hint = f"{data['acid_dosing_inhibit_time_remaining']}s remaining"
 
     cards = [
-        ("Mode", humanize(data["mode"]), mode_level(str(data["mode"])), None),
-        ("Pump", humanize(data["pump_speed"]), "neutral", pump_hint),
+        ("Mode", html.escape(humanize(data["mode"])), mode_level(str(data["mode"])), None),
+        ("Pump", html.escape(humanize(data["pump_speed"])), "neutral", pump_hint),
         ("pH", data["ph_measurement"], ph_level(float(data["ph_measurement"])), f"target {data['ph_control_setpoint']}"),
-        ("Chlorine", humanize(data["chlorine_control_status"]), chlorine_level(str(data["chlorine_control_status"])), f"target {data['chlorine_control_setpoint']}mV"),
+        ("Chlorine", html.escape(humanize(data["chlorine_control_status"])), chlorine_level(str(data["chlorine_control_status"])), f"target {data['chlorine_control_setpoint']}mV"),
         ("Salt cell", "Operating" if data["cell_is_operating"] else "Idle", "ok" if data["cell_is_operating"] else "neutral", f"{data['cell_reversal_count']} lifetime reversals"),
-        ("Acid dosing", humanize(dosing_status), dosing_level(dosing_status), dosing_hint),
+        ("Acid dosing", html.escape(humanize(dosing_status)), dosing_level(dosing_status), dosing_hint),
     ]
     card_html = "".join(
         f"<div class='card {level}'><div class='label'>{label}</div>"
@@ -411,8 +419,8 @@ def render_cards(data: dict) -> str:
 
 def render_chemistry(data: dict) -> str:
     rows = (
-        f"<tr><td>pH control</td><td>{humanize(data['ph_control_type'])} &middot; range seen {data['lowest_ph_measured']}–{data['highest_ph_measured']}</td></tr>"
-        f"<tr><td>Chlorine control</td><td>{humanize(data['chlorine_control_type'])} &middot; range seen {data['lowest_orp_measured']}–{data['highest_orp_measured']} mV</td></tr>"
+        f"<tr><td>pH control</td><td>{html.escape(humanize(data['ph_control_type']))} &middot; range seen {data['lowest_ph_measured']}–{data['highest_ph_measured']}</td></tr>"
+        f"<tr><td>Chlorine control</td><td>{html.escape(humanize(data['chlorine_control_type']))} &middot; range seen {data['lowest_orp_measured']}–{data['highest_orp_measured']} mV</td></tr>"
     )
     note = (
         "The chlorinator only exposes a Low/OK/High-style status and a setpoint over "
@@ -433,7 +441,7 @@ def render_schedule(pump_timers) -> str:
         window = f"{fmt_time_of_day(timer.start_time)} – {fmt_time_of_day(timer.stop_time)}"
         rows.append(
             f"<tr><td>Timer {i}</td><td>{state}</td><td>{window}</td>"
-            f"<td>{duration_hours:.1f}h</td><td>{timer.speed_level.name}</td></tr>"
+            f"<td>{duration_hours:.1f}h</td><td>{html.escape(timer.speed_level.name)}</td></tr>"
         )
     table = (
         "<table><tr><th>Timer</th><th>State</th><th>Window</th><th>Duration</th><th>Speed</th></tr>"
@@ -455,8 +463,11 @@ def render_pool_info(data: dict) -> str:
 
 
 def render_raw_dump(data: dict) -> str:
+    # Escaped generically (not just the fields known to be enum-derived
+    # strings) since this dumps every field pychlorinator returns,
+    # including ones that could change shape across versions.
     rows = "".join(
-        f"<tr><td>{k}</td><td>{v}</td></tr>"
+        f"<tr><td>{html.escape(str(k))}</td><td>{html.escape(str(v))}</td></tr>"
         for k, v in sorted(data.items())
         if k not in HTML_SKIP_KEYS
     )
@@ -470,11 +481,11 @@ def render_dashboard(data: dict | None, error: str | None, updated_at: float | N
 
     banner = ""
     if error:
-        banner = f"<div class='banner alert'>Last poll failed ({age_text}): {error}</div>"
+        banner = f"<div class='banner alert'>Last poll failed ({age_text}): {html.escape(error)}</div>"
     elif stale:
         banner = f"<div class='banner warn'>No successful poll in {age_text} - data below may be out of date.</div>"
     elif data and data.get("info_message") not in (None, "NoMessage"):
-        banner = f"<div class='banner warn'>Chlorinator message: {humanize(data['info_message'])}</div>"
+        banner = f"<div class='banner warn'>Chlorinator message: {html.escape(humanize(data['info_message']))}</div>"
 
     if data is None:
         body = "<p>Waiting for first poll...</p>"
@@ -492,7 +503,7 @@ def render_dashboard(data: dict | None, error: str | None, updated_at: float | N
         "<meta http-equiv='refresh' content='30'>"
         f"<style>{PAGE_STYLE}</style></head><body><div class='wrap'>"
         f"<h1>Pool Chlorinator</h1>"
-        f"<p class='subtitle'>{DEVICE_NAME} &middot; last updated {age_text}</p>"
+        f"<p class='subtitle'>{html.escape(DEVICE_NAME)} &middot; last updated {age_text}</p>"
         f"{banner}{body}"
         f"<footer>Auto-refreshes every 30s &middot; <a href='/help'>Help</a> &middot; "
         f"<a href='/metrics'>Prometheus metrics</a></footer>"
@@ -568,7 +579,7 @@ def render_help() -> str:
         "<!doctype html><html><head><title>Help &middot; Pool Chlorinator</title>"
         f"<style>{PAGE_STYLE}</style></head><body><div class='wrap'>"
         "<h1>Help</h1>"
-        f"<p class='subtitle'>{DEVICE_NAME} &middot; <a href='/'>&larr; back to dashboard</a></p>"
+        f"<p class='subtitle'>{html.escape(DEVICE_NAME)} &middot; <a href='/'>&larr; back to dashboard</a></p>"
         f"{body}"
         "<footer><a href='/'>&larr; Dashboard</a></footer>"
         "</div></body></html>"

@@ -91,3 +91,29 @@ def test_acid_dosing_card_has_no_countdown_when_not_time_limited(sample_data):
     # sample_data's status is InhibitedIndefinitely - no countdown applies.
     html = render_cards(sample_data)
     assert "remaining" not in html
+
+
+def test_cards_escape_html_in_device_sourced_fields(sample_data):
+    """Defense-in-depth: these fields come from the BLE device, not a
+    trusted static source. A rogue/spoofed device (or a parser regression)
+    shouldn't be able to inject markup into the dashboard."""
+    data = dict(sample_data, mode="<script>alert(1)</script>")
+    rendered = render_cards(data)
+    assert "<script>alert(1)</script>" not in rendered
+    assert "&lt;script&gt;" in rendered
+
+
+def test_raw_dump_escapes_html_in_arbitrary_fields(sample_data):
+    # volume_units only ever appears via the raw field dump (not in any of
+    # the curated cards/chemistry/schedule sections), so this specifically
+    # exercises render_raw_dump's own escaping, not render_chemistry's.
+    data = dict(sample_data, volume_units="<img src=x onerror=alert(1)>")
+    rendered = render_dashboard(data=data, error=None, updated_at=time.time())
+    assert "<img src=x onerror=alert(1)>" not in rendered
+    assert "&lt;img" in rendered
+
+
+def test_error_message_is_escaped_in_banner():
+    rendered = render_dashboard(data=None, error="<b>boom</b>", updated_at=1000.0)
+    assert "<b>boom</b>" not in rendered
+    assert "&lt;b&gt;boom&lt;/b&gt;" in rendered
