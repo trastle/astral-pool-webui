@@ -58,6 +58,15 @@ if [[ "$SCRIPT_DIR" != "$TARGET_DIR" ]]; then
   SCRIPT_DIR="$TARGET_DIR"
 fi
 
+# Enforce this regardless of whatever permissions the source file (or an
+# earlier version of this script) happened to leave it with - it holds the
+# access code and any other per-install secrets, and rsync alone only
+# preserves whatever the source had (typically the default umask, e.g.
+# 644, if someone just `cp`'d it from the .example per the README).
+if [[ -f "$SCRIPT_DIR/gateway/.secrets.yaml" ]]; then
+  sudo chmod 600 "$SCRIPT_DIR/gateway/.secrets.yaml"
+fi
+
 echo "== Setting up the project venv (as $SERVICE_USER) =="
 if [[ ! -d "$SCRIPT_DIR/venv" ]]; then
   sudo -u "$SERVICE_USER" python3 -m venv "$SCRIPT_DIR/venv"

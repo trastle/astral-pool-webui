@@ -87,7 +87,23 @@ update over and restarts the service.
 
 Running it as its own account (rather than whichever user happens to run
 the script) means a bug or compromised dependency in the BLE/MQTT/web
-stack can't touch anything outside that account's own home directory.
+stack can't touch anything outside that account's own home directory. One
+consequence: your regular login won't automatically be able to read its
+logs or files (everything logs to the systemd journal - see `journalctl -u
+chlorinator-gateway` - there's no separate log file). To grant another
+admin account read-only access for troubleshooting, without giving it
+broad sudo:
+
+```bash
+sudo usermod -aG systemd-journal <your-user>   # read logs without sudo
+sudo usermod -aG chlorinator-gateway <your-user>
+sudo chmod 750 /home/chlorinator-gateway        # let that group traverse/read
+```
+
+`gateway/.secrets.yaml` stays owner-only (`chmod 600`, no group bit) either
+way, so this doesn't expose the access code or any MQTT credentials - only
+code, non-secret config, and logs become readable. Group membership is
+picked up on next login, not retroactively for an already-open session.
 
 To try the app out directly first, without provisioning anything (this
 venv is just for trying it out - `provision.sh` manages its own,
@@ -120,8 +136,16 @@ server), and `mqtt` (the optional bridge):
 
 1. [`gateway/settings.yaml`](gateway/settings.yaml) - committed, non-secret
    defaults.
-2. `gateway/.secrets.yaml` - gitignored, just your access code (copy it from
-   [`gateway/.secrets.yaml.example`](gateway/.secrets.yaml.example)).
+2. `gateway/.secrets.yaml` - gitignored (copy it from
+   [`gateway/.secrets.yaml.example`](gateway/.secrets.yaml.example)). Despite
+   the name, this is really "any per-install override, not just secrets" -
+   put your access code here, but also anything else specific to one
+   install (e.g. `mqtt.host`) that you don't want to set via an environment
+   variable. `provision.sh` copies it along with the rest of the project
+   into the service account's home directory and preserves it across
+   redeploys - a value set only in a hand-edited systemd unit or shell
+   session will *not* survive the next `provision.sh` run, since that
+   regenerates the unit from scratch.
 3. Environment variables - override anything from either file above, e.g.
    for containerized/systemd deployments where you'd rather not keep a
    secrets file on disk at all.
