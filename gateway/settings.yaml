@@ -11,6 +11,23 @@ chlorinator:
 # (e.g. bind host, auth) - keep it namespaced rather than flat.
 web:
   http_port: 8080
+  # Only requests from these source networks get the dashboard/metrics -
+  # everyone else gets 403. Defaults to private/loopback ranges only, so
+  # that accidentally exposing this port (a misconfigured router, a stray
+  # port-forward, etc.) doesn't hand the dashboard to the whole internet.
+  #
+  # This does NOT include VPN/mesh-network ranges like Tailscale's
+  # (100.64.0.0/10, fc00::/7 for its IPv6 range) even though those aren't
+  # publicly routable either - add your own if you use one, e.g. in
+  # .secrets.yaml (see .secrets.yaml.example) so it isn't overwritten by a
+  # future `git pull`. Override with GATEWAY_WEB__ALLOWED_CIDRS (as a JSON
+  # array - see README).
+  allowed_cidrs:
+    - 10.0.0.0/8
+    - 172.16.0.0/12
+    - 192.168.0.0/16
+    - 127.0.0.0/8
+    - ::1/128
 
 # MQTT is optional - leave mqtt.host unset to run without it (dashboard and
 # /metrics keep working either way). Set these once an MQTT broker (e.g.

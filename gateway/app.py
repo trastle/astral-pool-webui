@@ -10,11 +10,16 @@ Also publishes state to MQTT, and executes real pychlorinator action/setup
 writes against the device when commands arrive on chlorinator/<name>/action
 or .../setup - see handle_mqtt_command() below.
 
+Every HTTP route is gated by restrict_to_allowed_networks() below, which
+403s any request whose source address isn't in config.ALLOWED_NETWORKS
+(private/loopback ranges by default - see settings.yaml's web.allowed_cidrs).
+
 Run directly (venv activated) or via the systemd/chlorinator-gateway.service
 unit.
 """
 import asyncio
 import contextlib
+import ipaddress
 import logging
 import re
 import time
@@ -30,13 +35,13 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(mess
 
 import uvicorn
 from bleak import BleakScanner
-from fastapi import FastAPI
-from fastapi.responses import HTMLResponse, Response
+from fastapi import FastAPI, Request
+from fastapi.responses import HTMLResponse, PlainTextResponse, Response
 from prometheus_client import CONTENT_TYPE_LATEST, CollectorRegistry, Gauge, generate_latest
 from pychlorinator.chlorinator import ChlorinatorAPI
 from pychlorinator.chlorinator_parsers import ChlorinatorActions
 
-from config import ACCESS_CODE, DEVICE_NAME, HTTP_PORT, POLL_INTERVAL_SECONDS
+from config import ACCESS_CODE, ALLOWED_NETWORKS, DEVICE_NAME, HTTP_PORT, POLL_INTERVAL_SECONDS
 from mqtt_bridge import MqttBridge
 from quirks import decode_pool_volume
 
@@ -561,7 +566,34 @@ async def lifespan(app: FastAPI):
     mqtt_bridge.disconnect()
 
 
+def _client_allowed(host: str | None, networks) -> bool:
+    """Is this client's source address within one of the configured
+    allowed networks? Used to keep the dashboard/metrics off the public
+    internet if this port ever gets accidentally exposed - see
+    config.ALLOWED_NETWORKS / settings.yaml's web.allowed_cidrs."""
+    if not host:
+        return False
+    try:
+        addr = ipaddress.ip_address(host)
+    except ValueError:
+        return False
+    # Dual-stack listeners can hand back an IPv4 address wrapped as
+    # ::ffff:a.b.c.d - unwrap it so it still matches a plain IPv4 network.
+    if isinstance(addr, ipaddress.IPv6Address) and addr.ipv4_mapped:
+        addr = addr.ipv4_mapped
+    return any(addr in network for network in networks)
+
+
 app = FastAPI(lifespan=lifespan, title="Pool Chlorinator")
+
+
+@app.middleware("http")
+async def restrict_to_allowed_networks(request: Request, call_next):
+    client_host = request.client.host if request.client else None
+    if not _client_allowed(client_host, ALLOWED_NETWORKS):
+        log.warning("Rejected request from disallowed address: %s", client_host)
+        return PlainTextResponse("Forbidden", status_code=403)
+    return await call_next(request)
 
 
 @app.get("/", response_class=HTMLResponse)

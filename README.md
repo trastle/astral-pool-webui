@@ -159,6 +159,7 @@ between the section and the key:
 | `GATEWAY_CHLORINATOR__ACCESS_CODE` | `chlorinator.access_code` | *(required)* |
 | `GATEWAY_CHLORINATOR__POLL_INTERVAL_SECONDS` | `chlorinator.poll_interval_seconds` | `60` |
 | `GATEWAY_WEB__HTTP_PORT` | `web.http_port` | `8080` |
+| `GATEWAY_WEB__ALLOWED_CIDRS` | `web.allowed_cidrs` | private/loopback ranges - see below |
 | `GATEWAY_MQTT__HOST` | `mqtt.host` | *(unset)* |
 | `GATEWAY_MQTT__PORT` | `mqtt.port` | `1883` |
 | `GATEWAY_MQTT__USERNAME` / `GATEWAY_MQTT__PASSWORD` | `mqtt.username` / `mqtt.password` | *(unset)* |
@@ -166,6 +167,36 @@ between the section and the key:
 
 Leave `mqtt.host` unset to run without MQTT entirely - the app works
 standalone (dashboard + metrics) with no broker configured at all.
+
+### Restricting which networks can reach the dashboard
+
+Every request (dashboard, `/help`, `/metrics`) is checked against
+`web.allowed_cidrs` - anything from outside those networks gets `403
+Forbidden`. This defaults to private/loopback ranges only (`10.0.0.0/8`,
+`172.16.0.0/12`, `192.168.0.0/16`, `127.0.0.0/8`, `::1/128`), so
+accidentally exposing this port to the internet (a misconfigured router, a
+stray port-forward, UPnP, etc.) doesn't hand the dashboard to anyone who
+finds it.
+
+**This does not include VPN/mesh-network ranges** like Tailscale's
+(`100.64.0.0/10` for IPv4, `fc00::/7` for its IPv6 range) even though
+those aren't publicly routable either - if you access this over a VPN,
+add its range yourself, e.g. in `gateway/.secrets.yaml`:
+
+```yaml
+web:
+  allowed_cidrs:
+    - 10.0.0.0/8
+    - 172.16.0.0/12
+    - 192.168.0.0/16
+    - 127.0.0.0/8
+    - ::1/128
+    - 100.64.0.0/10   # e.g. Tailscale
+```
+
+(List values can't be set with a plain environment variable string - if
+you'd rather use `GATEWAY_WEB__ALLOWED_CIDRS`, Dynaconf needs it as JSON:
+`GATEWAY_WEB__ALLOWED_CIDRS='@json ["10.0.0.0/8", "100.64.0.0/10"]'`.)
 
 ### Command topics (optional)
 
