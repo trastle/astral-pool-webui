@@ -58,13 +58,22 @@ not just sensors).
 - (Optional) An MQTT broker - e.g. the Mosquitto add-on if you run Home
   Assistant OS/Supervised.
 
+## Project layout
+
+- [`gateway/`](gateway/) - the actual app (`app.py`, plus `config.py`,
+  `mqtt_bridge.py`, `quirks.py`). This is what you deploy/run as a service.
+- [`scripts/`](scripts/) - standalone helper scripts for debugging your BLE
+  setup. Not part of the deployed app - see their docstrings and the
+  [Diagnostic scripts](#diagnostic-scripts) section below.
+- [`tests/`](tests/) - tests for `gateway/`.
+
 ## Setup
 
 ```bash
 git clone <this-repo-url>
 cd astral-pool-webui
-cp .env.example .env
-# edit .env: set CHLORINATOR_ACCESS_CODE at minimum
+cp gateway/.env.example gateway/.env
+# edit gateway/.env: set CHLORINATOR_ACCESS_CODE at minimum
 bash provision.sh
 ```
 
@@ -75,7 +84,7 @@ Run it directly to try it out:
 
 ```bash
 source venv/bin/activate
-python3 app.py
+python3 gateway/app.py
 # dashboard at http://<host>:8080/
 ```
 
@@ -92,8 +101,8 @@ on the Pi:
 
 ### Configuration
 
-All configuration is via environment variables (or `.env` - see
-[`.env.example`](.env.example)):
+All configuration is via environment variables (or `gateway/.env` - see
+[`gateway/.env.example`](gateway/.env.example)):
 
 | Variable | Default | Notes |
 |---|---|---|
@@ -125,18 +134,26 @@ instead of waiting for the next scheduled poll.
 
 ## Diagnostic scripts
 
-Useful when first getting a device talking to this project, or debugging a
+`scripts/` holds standalone helper scripts for debugging your setup - they
+are **not** part of the deployed gateway app. Useful roughly in this order
+when first getting a device talking to this project, or debugging a
 connection issue:
 
-- `ble_scan.py` - scans for nearby BLE devices and flags anything that looks
-  like an eQ chlorinator.
-- `gatt_probe.py` - connects and enumerates GATT services/characteristics
-  (no access code needed - just confirms a real connection is possible).
-- `read_state.py` - does the full read-side handshake (access code required)
-  and prints the current state once, without touching any settings.
+- `scripts/ble_scan.py` - scans for nearby BLE devices and flags anything
+  that looks like an eQ chlorinator.
+- `scripts/gatt_probe.py` - connects and enumerates GATT
+  services/characteristics (no access code needed - just confirms a real
+  connection is possible).
+- `scripts/read_state.py` - does the full read-side handshake (access code
+  required) and prints the current state once, without touching any
+  settings.
 
-Run any of them the same way as `app.py` (venv activated, from this
-directory).
+Run any of them from the project root (venv activated):
+
+```bash
+source venv/bin/activate
+python3 scripts/read_state.py
+```
 
 ## Development
 

@@ -1,9 +1,13 @@
 #!/usr/bin/env python3
-"""Scan for nearby BLE devices and flag anything that looks like the EQ25.
+"""Debugging helper - NOT part of the deployed gateway app.
 
-Run once the Pi is near the pool equipment:
-    source ~/gateway/venv/bin/activate
-    python3 ~/gateway/ble_scan.py
+Scan for nearby BLE devices and flag anything that looks like the EQ25.
+Use this first when setting up a new device, to confirm it's advertising
+and visible before troubleshooting anything else.
+
+Run once the Pi is near the pool equipment, from the project root:
+    source venv/bin/activate
+    python3 scripts/ble_scan.py
 """
 import asyncio
 

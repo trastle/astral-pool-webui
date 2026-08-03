@@ -30,10 +30,10 @@ fi
 "$SCRIPT_DIR/venv/bin/pip" install --upgrade pip -q
 "$SCRIPT_DIR/venv/bin/pip" install -q -r "$SCRIPT_DIR/requirements.txt"
 
-if [[ ! -f "$SCRIPT_DIR/.env" ]]; then
+if [[ ! -f "$SCRIPT_DIR/gateway/.env" ]]; then
   echo
-  echo "WARNING: $SCRIPT_DIR/.env is missing (needed for CHLORINATOR_ACCESS_CODE)."
-  echo "Copy .env.example to .env and fill it in before the gateway will work."
+  echo "WARNING: $SCRIPT_DIR/gateway/.env is missing (needed for CHLORINATOR_ACCESS_CODE)."
+  echo "Copy gateway/.env.example to gateway/.env and fill it in before the gateway will work."
 fi
 
 echo

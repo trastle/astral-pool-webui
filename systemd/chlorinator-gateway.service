@@ -12,8 +12,8 @@ Wants=bluetooth.target network-online.target
 [Service]
 Type=simple
 User=pi
-WorkingDirectory=/home/pi/astral-pool-webui
-ExecStart=/home/pi/astral-pool-webui/venv/bin/python3 /home/pi/astral-pool-webui/app.py
+WorkingDirectory=/home/pi/astral-pool-webui/gateway
+ExecStart=/home/pi/astral-pool-webui/venv/bin/python3 /home/pi/astral-pool-webui/gateway/app.py
 Restart=on-failure
 RestartSec=10
 
