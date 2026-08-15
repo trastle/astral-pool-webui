@@ -125,6 +125,10 @@ class MqttBridge:
     paho in the background, and is reflected in self.connected /
     self.disconnect_count / self.last_connected_at for app.py's /metrics
     to expose - see the module docstring for why.
+
+    Also holds the last known-good pH/ORP reading, republished in place of
+    the device's own values while it flags chemistry_values_valid=False -
+    see publish_state() for why.
     """
 
     def __init__(self) -> None:
@@ -137,6 +141,11 @@ class MqttBridge:
         self._command_handler: CommandHandler | None = None
         self._action_topic = f"{MQTT_BASE_TOPIC}/action"
         self._setup_topic = f"{MQTT_BASE_TOPIC}/setup"
+        # Last ph_measurement/chlorine_control_status published while the
+        # device itself reported chemistry_values_valid=True - see
+        # publish_state() for why these get substituted back in.
+        self._last_valid_ph_measurement: float | None = None
+        self._last_valid_chlorine_control_status: int | None = None
         if not self.enabled:
             log.info("MQTT_HOST not set - MQTT bridge disabled")
             return
@@ -201,8 +210,28 @@ class MqttBridge:
     def publish_state(self, data: dict) -> None:
         if not self.enabled:
             return
+        payload = build_state_payload(data)
+        if payload["chemistry_values_valid"]:
+            self._last_valid_ph_measurement = payload["ph_measurement"]
+            self._last_valid_chlorine_control_status = payload["chlorine_control_status"]
+        elif self._last_valid_ph_measurement is not None:
+            # The device flags its own pH/ORP readings as not-yet-trustworthy
+            # via chemistry_values_valid (seen for ~8h after an overnight
+            # power cycle, while the pump ran a priming cycle) but keeps
+            # returning a raw reading regardless - observed: a flat,
+            # physically-impossible pH of 0.0 for that whole window, which
+            # got faithfully recorded as real history downstream. Hold the
+            # last known-good values instead of relaying junk. Everything
+            # else in the payload - including chemistry_values_valid/current
+            # themselves - still publishes live every poll, so the "not
+            # valid yet" state remains visible downstream, just without
+            # clobbering the readings with garbage. If we've never seen a
+            # valid reading at all (fresh start), there's nothing better to
+            # substitute, so the raw value passes through as-is.
+            payload["ph_measurement"] = self._last_valid_ph_measurement
+            payload["chlorine_control_status"] = self._last_valid_chlorine_control_status
         try:
-            self._client.publish(f"{MQTT_BASE_TOPIC}/state", json.dumps(build_state_payload(data)))
+            self._client.publish(f"{MQTT_BASE_TOPIC}/state", json.dumps(payload))
         except Exception as exc:  # noqa: BLE001
             log.warning("MQTT publish failed: %s", exc)
 
