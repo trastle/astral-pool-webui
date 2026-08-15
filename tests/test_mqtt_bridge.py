@@ -2,6 +2,7 @@ import asyncio
 import json
 from unittest.mock import MagicMock, patch
 
+from conftest import FakeEnumValue
 from mqtt_bridge import MqttBridge, build_state_payload
 
 
@@ -247,6 +248,54 @@ def test_on_message_noop_when_no_handler_registered():
         bridge = MqttBridge()
         msg = MagicMock(topic="chlorinator/testpool/action", payload=b'{"action": 2}')
         bridge._on_message(None, None, msg)  # no handler, no loop set - must not raise
+
+
+def test_publish_state_holds_last_valid_reading_while_chemistry_invalid(monkeypatch, sample_data):
+    """The device keeps returning a raw pH/ORP reading even while flagging
+    chemistry_values_valid=False (observed: a flat 0.0 pH for hours after a
+    power cycle) - the bridge should republish the last known-good reading
+    instead of relaying that, while everything else (including the validity
+    flags themselves) keeps updating live."""
+    monkeypatch.setattr("mqtt_bridge.MQTT_HOST", "test-broker")
+    fake_client = MagicMock()
+    with patch("mqtt_bridge.mqtt.Client", return_value=fake_client):
+        bridge = MqttBridge()
+
+        bridge.publish_state(sample_data)
+        good_payload = json.loads(fake_client.publish.call_args[0][1])
+        assert good_payload["ph_measurement"] == 8.8
+        assert good_payload["chlorine_control_status"] == 0
+
+        invalid_data = {
+            **sample_data,
+            "ph_measurement": 0.0,
+            "chlorine_control_status": FakeEnumValue("High", 2),
+            "chemistry_values_valid": False,
+            "chemistry_values_current": False,
+        }
+        bridge.publish_state(invalid_data)
+        held_payload = json.loads(fake_client.publish.call_args[0][1])
+        assert held_payload["ph_measurement"] == 8.8
+        assert held_payload["chlorine_control_status"] == 0
+        # The validity flags themselves still reflect reality, so this
+        # state is still visible downstream - only the readings are held.
+        assert held_payload["chemistry_values_valid"] is False
+        assert held_payload["chemistry_values_current"] is False
+
+
+def test_publish_state_passes_through_raw_reading_when_never_seen_a_valid_one(monkeypatch, sample_data):
+    """No last-known-good value exists yet (e.g. a fresh start while the
+    device is still stabilizing) - nothing better to substitute, so the raw
+    (possibly junk) reading passes through rather than silently vanishing."""
+    monkeypatch.setattr("mqtt_bridge.MQTT_HOST", "test-broker")
+    fake_client = MagicMock()
+    with patch("mqtt_bridge.mqtt.Client", return_value=fake_client):
+        bridge = MqttBridge()
+
+        invalid_data = {**sample_data, "ph_measurement": 0.0, "chemistry_values_valid": False}
+        bridge.publish_state(invalid_data)
+        payload = json.loads(fake_client.publish.call_args[0][1])
+        assert payload["ph_measurement"] == 0.0
 
 
 def test_publish_state_failure_is_swallowed(monkeypatch, sample_data):
