@@ -300,11 +300,11 @@ def test_publish_state_passes_through_raw_reading_when_never_seen_a_valid_one(mo
 
 def test_publish_state_persists_valid_reading_to_disk(monkeypatch, tmp_path, sample_data):
     """Every field the cache exists to protect - only pH and chlorine
-    status (see mqtt_bridge.py's module docstring on _CACHE_FILE) - plus a
+    status (see mqtt_bridge.py's module docstring on LAST_KNOWN_GOOD_CACHE_FILE) - plus a
     last_changed timestamp, so the file is inspectable/debuggable on its
     own."""
     monkeypatch.setattr("mqtt_bridge.MQTT_HOST", "test-broker")
-    monkeypatch.setattr("mqtt_bridge._CACHE_FILE", tmp_path / "cache.json")
+    monkeypatch.setattr("mqtt_bridge.LAST_KNOWN_GOOD_CACHE_FILE", tmp_path / "cache.json")
     fake_client = MagicMock()
     with patch("mqtt_bridge.mqtt.Client", return_value=fake_client):
         bridge = MqttBridge()
@@ -321,7 +321,7 @@ def test_publish_state_only_writes_disk_cache_when_the_value_changes(monkeypatch
     poll - repeating the same valid reading (the common case - most polls
     don't change anything) shouldn't touch disk each time."""
     monkeypatch.setattr("mqtt_bridge.MQTT_HOST", "test-broker")
-    monkeypatch.setattr("mqtt_bridge._CACHE_FILE", tmp_path / "cache.json")
+    monkeypatch.setattr("mqtt_bridge.LAST_KNOWN_GOOD_CACHE_FILE", tmp_path / "cache.json")
     fake_client = MagicMock()
     with patch("mqtt_bridge.mqtt.Client", return_value=fake_client):
         bridge = MqttBridge()
@@ -350,7 +350,7 @@ def test_bridge_restores_last_known_good_reading_from_disk_on_startup(monkeypatc
         "last_changed": "2026-08-16T08:00:00+00:00",
     }))
     monkeypatch.setattr("mqtt_bridge.MQTT_HOST", "test-broker")
-    monkeypatch.setattr("mqtt_bridge._CACHE_FILE", cache_file)
+    monkeypatch.setattr("mqtt_bridge.LAST_KNOWN_GOOD_CACHE_FILE", cache_file)
     fake_client = MagicMock()
     with patch("mqtt_bridge.mqtt.Client", return_value=fake_client):
         bridge = MqttBridge()
@@ -370,7 +370,7 @@ def test_bridge_ignores_missing_cache_file_on_startup(monkeypatch, tmp_path):
     """First-ever run, or a fresh install - no cache file exists yet.
     Must behave exactly like before this feature existed, not raise."""
     monkeypatch.setattr("mqtt_bridge.MQTT_HOST", "test-broker")
-    monkeypatch.setattr("mqtt_bridge._CACHE_FILE", tmp_path / "does-not-exist.json")
+    monkeypatch.setattr("mqtt_bridge.LAST_KNOWN_GOOD_CACHE_FILE", tmp_path / "does-not-exist.json")
     with patch("mqtt_bridge.mqtt.Client", return_value=MagicMock()):
         bridge = MqttBridge()
 
@@ -386,7 +386,7 @@ def test_bridge_ignores_corrupt_cache_file_on_startup(monkeypatch, tmp_path):
     cache_file = tmp_path / "cache.json"
     cache_file.write_text("not valid json{")
     monkeypatch.setattr("mqtt_bridge.MQTT_HOST", "test-broker")
-    monkeypatch.setattr("mqtt_bridge._CACHE_FILE", cache_file)
+    monkeypatch.setattr("mqtt_bridge.LAST_KNOWN_GOOD_CACHE_FILE", cache_file)
     with patch("mqtt_bridge.mqtt.Client", return_value=MagicMock()):
         bridge = MqttBridge()  # must not raise
 
