@@ -41,3 +41,8 @@ mqtt:
   # base_topic left unset on purpose - defaults to
   # chlorinator/<device name, lowercased>. Only set this to override that.
   base_topic:
+  # Where mqtt_bridge.py persists the last known-good pH/chlorine reading
+  # (see MqttBridge's docstring) so it survives a gateway restart, not
+  # just kept in memory. Relative to gateway/ - resolved via config.py the
+  # same way as every other file path here, not the working directory.
+  last_known_good_cache_file: last_known_good_readings.json

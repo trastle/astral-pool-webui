@@ -209,15 +209,25 @@ async def refresh_now() -> None:
     try:
         async with ble_lock:
             data = await poll_once()
-        update_metrics(data)
+        raw_ph = data["ph_measurement"]  # for the log line below - see the comment there
         mqtt_bridge.publish_state(data)
+        # Same hold-last-known-good substitution MQTT/Home Assistant get,
+        # applied here too - otherwise this dashboard and /metrics would
+        # show the device's raw garbage reading during an invalid window
+        # even though MQTT no longer does. Mutates data in place, so
+        # everything below (metrics, the dashboard cache) sees it.
+        data["ph_measurement"], data["chlorine_control_status"] = mqtt_bridge.resolve_chemistry_reading(data)
+        update_metrics(data)
         async with state_lock:
             latest_state["data"] = data
             latest_state["error"] = None
             latest_state["updated_at"] = time.time()
         g_scrape_success.set(1)
         g_last_success_timestamp.set(time.time())
-        log.info("Poll OK: mode=%s speed=%s ph=%s", data["mode"], data["pump_speed"], data["ph_measurement"])
+        # Logs the device's actual raw reading, not the (possibly
+        # substituted) one now in data - this is what diagnosing a bad
+        # chemistry_values_valid window needs to see.
+        log.info("Poll OK: mode=%s speed=%s ph=%s", data["mode"], data["pump_speed"], raw_ph)
     except Exception as exc:  # noqa: BLE001 - want to survive and retry
         log.warning("Poll failed: %s", exc)
         async with state_lock:

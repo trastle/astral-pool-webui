@@ -4,6 +4,13 @@ __pycache__/
 .pytest_cache/
 .coverage
 
+# Runtime state, not source - written by mqtt_bridge.py's last known-good
+# pH/chlorine cache. Default filename - path/name are configurable via
+# settings.yaml's mqtt.last_known_good_cache_file (see config.py's
+# LAST_KNOWN_GOOD_CACHE_FILE), so this won't catch an overridden name.
+gateway/last_known_good_readings.json
+gateway/last_known_good_readings.tmp
+
 # Anything config/secret-shaped - never commit real values.
 # .secrets.yaml.example is the one intentional exception (template only,
 # no real values).

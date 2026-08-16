@@ -117,6 +117,7 @@ the one before it:
 | `GATEWAY_MQTT__PORT` | `mqtt.port` | `1883` |
 | `GATEWAY_MQTT__USERNAME` / `GATEWAY_MQTT__PASSWORD` | `mqtt.username` / `mqtt.password` | *(unset)* |
 | `GATEWAY_MQTT__BASE_TOPIC` | `mqtt.base_topic` | `chlorinator/<device name, lowercased>` |
+| `GATEWAY_MQTT__LAST_KNOWN_GOOD_CACHE_FILE` | `mqtt.last_known_good_cache_file` | `last_known_good_readings.json` |
 
 Leave `mqtt.host` unset to run without MQTT - dashboard and metrics
 still work.

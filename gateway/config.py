@@ -67,3 +67,8 @@ MQTT_USERNAME = _str_or_none(settings.get("mqtt.username"))
 MQTT_PASSWORD = _str_or_none(settings.get("mqtt.password"))
 # Defaults to chlorinator/<device name, lowercased>.
 MQTT_BASE_TOPIC = _str_or_none(settings.get("mqtt.base_topic")) or f"chlorinator/{DEVICE_NAME.lower()}"
+# Resolved relative to this file (not the working directory), same as
+# settings_files above - see mqtt_bridge.py's MqttBridge for what this is.
+LAST_KNOWN_GOOD_CACHE_FILE = Path(__file__).parent / str(
+    settings.get("mqtt.last_known_good_cache_file", "last_known_good_readings.json")
+)
