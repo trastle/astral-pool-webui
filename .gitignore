@@ -4,6 +4,11 @@ __pycache__/
 .pytest_cache/
 .coverage
 
+# Runtime state, not source - written by mqtt_bridge.py's last known-good
+# pH/chlorine cache (see gateway/mqtt_bridge.py's _CACHE_FILE).
+gateway/last_known_good_readings.json
+gateway/last_known_good_readings.tmp
+
 # Anything config/secret-shaped - never commit real values.
 # .secrets.yaml.example is the one intentional exception (template only,
 # no real values).

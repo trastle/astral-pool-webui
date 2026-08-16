@@ -41,6 +41,18 @@ def make_timer(start_hms, stop_hms, enabled, speed_name):
     )
 
 
+@pytest.fixture(autouse=True)
+def _isolate_mqtt_bridge_cache_file(monkeypatch, tmp_path):
+    """mqtt_bridge.MqttBridge persists its last known-good pH/chlorine
+    reading to _CACHE_FILE. Point every test at a throwaway path by
+    default (pytest.ini's pythonpath=gateway makes mqtt_bridge importable
+    from any test file, whether or not it's actually under test) so tests
+    that don't care about disk persistence can't leak a real
+    last_known_good_readings.json into the gateway/ directory or
+    cross-contaminate each other via a stale file across test runs."""
+    monkeypatch.setattr("mqtt_bridge._CACHE_FILE", tmp_path / "last_known_good_readings.json")
+
+
 @pytest.fixture
 def sample_data():
     """A realistic fake chlorinator state dict - field names/shapes mirror a

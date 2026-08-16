@@ -52,7 +52,10 @@ so the rest of the app keeps working standalone with no broker present.
 import asyncio
 import json
 import logging
+import os
 import time
+from datetime import datetime, timezone
+from pathlib import Path
 from typing import Awaitable, Callable
 
 import paho.mqtt.client as mqtt
@@ -64,6 +67,12 @@ log = logging.getLogger("mqtt_bridge")
 
 # handler(kind: "action" | "setup", payload: dict) -> None (async)
 CommandHandler = Callable[[str, dict], Awaitable[None]]
+
+# Where the last known-good pH/chlorine reading persists across restarts -
+# see MqttBridge's _load_cache_from_disk()/_save_cache_to_disk() for why
+# the in-memory cache alone isn't enough. Resolved relative to this file
+# (not the working directory) for the same reason config.py does.
+_CACHE_FILE = Path(__file__).parent / "last_known_good_readings.json"
 
 
 def build_state_payload(data: dict) -> dict:
@@ -128,7 +137,11 @@ class MqttBridge:
 
     Also holds the last known-good pH/ORP reading, republished in place of
     the device's own values while it flags chemistry_values_valid=False -
-    see publish_state() for why.
+    see publish_state() for why. Persisted to _CACHE_FILE on every change
+    (not just kept in memory) so a gateway restart landing while chemistry
+    is already invalid still has a real value to fall back to, rather than
+    passing the device's raw garbage reading straight through with nothing
+    to compare it against.
     """
 
     def __init__(self) -> None:
@@ -143,9 +156,12 @@ class MqttBridge:
         self._setup_topic = f"{MQTT_BASE_TOPIC}/setup"
         # Last ph_measurement/chlorine_control_status published while the
         # device itself reported chemistry_values_valid=True - see
-        # publish_state() for why these get substituted back in.
+        # publish_state() for why these get substituted back in. Restored
+        # from disk below so this survives a restart, not just held in
+        # memory for this process's lifetime.
         self._last_valid_ph_measurement: float | None = None
         self._last_valid_chlorine_control_status: int | None = None
+        self._load_cache_from_disk()
         if not self.enabled:
             log.info("MQTT_HOST not set - MQTT bridge disabled")
             return
@@ -156,6 +172,47 @@ class MqttBridge:
         self._client.on_message = self._on_message
         self._client.on_connect = self._on_connect
         self._client.on_disconnect = self._on_disconnect
+
+    def _load_cache_from_disk(self) -> None:
+        """Restores the last known-good pH/chlorine reading at startup, if
+        a cache file from a previous run exists. Tolerant of a
+        missing/corrupt file (fresh install, first-ever run, or a write
+        that got interrupted before the atomic rename in
+        _save_cache_to_disk) - just falls back to "nothing cached yet",
+        same as before this existed, rather than crashing the app over a
+        cache that only ever exists to make things more reliable."""
+        try:
+            cached = json.loads(_CACHE_FILE.read_text())
+            self._last_valid_ph_measurement = cached["ph_measurement"]
+            self._last_valid_chlorine_control_status = cached["chlorine_control_status"]
+            log.info(
+                "Restored last known-good reading from %s (last changed %s)",
+                _CACHE_FILE, cached.get("last_changed"),
+            )
+        except FileNotFoundError:
+            pass
+        except (json.JSONDecodeError, KeyError, TypeError, OSError) as exc:
+            log.warning("Ignoring unreadable last known-good cache at %s: %s", _CACHE_FILE, exc)
+
+    def _save_cache_to_disk(self) -> None:
+        """Writes the current last known-good reading to disk (temp file +
+        os.replace(), so an interrupted write - e.g. a crash or power loss
+        mid-write - never leaves a corrupt cache file behind for the next
+        _load_cache_from_disk() to trip over). Only called from
+        publish_state() when the cached value actually changes, not on
+        every poll, since it exists specifically to survive events like
+        the process being killed, not to track every intermediate value."""
+        payload = {
+            "ph_measurement": self._last_valid_ph_measurement,
+            "chlorine_control_status": self._last_valid_chlorine_control_status,
+            "last_changed": datetime.now(timezone.utc).isoformat(),
+        }
+        tmp_path = _CACHE_FILE.with_suffix(".tmp")
+        try:
+            tmp_path.write_text(json.dumps(payload))
+            os.replace(tmp_path, _CACHE_FILE)
+        except OSError as exc:
+            log.warning("Failed to persist last known-good cache to %s: %s", _CACHE_FILE, exc)
 
     def set_command_handler(self, handler: CommandHandler) -> None:
         """Register the async function to call when an action/setup command
@@ -212,8 +269,14 @@ class MqttBridge:
             return
         payload = build_state_payload(data)
         if payload["chemistry_values_valid"]:
+            changed = (
+                payload["ph_measurement"] != self._last_valid_ph_measurement
+                or payload["chlorine_control_status"] != self._last_valid_chlorine_control_status
+            )
             self._last_valid_ph_measurement = payload["ph_measurement"]
             self._last_valid_chlorine_control_status = payload["chlorine_control_status"]
+            if changed:
+                self._save_cache_to_disk()
         elif self._last_valid_ph_measurement is not None:
             # The device flags its own pH/ORP readings as not-yet-trustworthy
             # via chemistry_values_valid (seen for ~8h after an overnight
