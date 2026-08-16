@@ -2,6 +2,8 @@ import asyncio
 import json
 from unittest.mock import MagicMock, patch
 
+from pychlorinator.chlorinator_parsers import ChlorineControlStatuses
+
 from conftest import FakeEnumValue
 from mqtt_bridge import MqttBridge, build_state_payload
 
@@ -296,6 +298,53 @@ def test_publish_state_passes_through_raw_reading_when_never_seen_a_valid_one(mo
         bridge.publish_state(invalid_data)
         payload = json.loads(fake_client.publish.call_args[0][1])
         assert payload["ph_measurement"] == 0.0
+
+
+def test_resolve_chemistry_reading_returns_raw_values_when_valid(monkeypatch, sample_data):
+    monkeypatch.setattr("mqtt_bridge.MQTT_HOST", "test-broker")
+    with patch("mqtt_bridge.mqtt.Client", return_value=MagicMock()):
+        bridge = MqttBridge()
+        ph, status = bridge.resolve_chemistry_reading(sample_data)
+
+    assert ph == sample_data["ph_measurement"]
+    assert status is sample_data["chlorine_control_status"]
+
+
+def test_resolve_chemistry_reading_substitutes_cached_reading_when_invalid(monkeypatch, sample_data):
+    """The same protection app.py's dashboard/metrics need (see the
+    module docstring on resolve_chemistry_reading) - and the returned
+    status must be a real ChlorineControlStatuses member, not a plain
+    int, since callers like app.py's humanize()/chlorine_level() expect
+    whatever pychlorinator itself would have returned from a fresh poll.
+    Uses an explicit real ("Ok", 4) reading rather than sample_data's
+    default - its FakeEnumValue("Low", 0) doesn't match this fixture's
+    real int-to-name mapping (0 is actually Invalid_NoMeasurement), which
+    would make this test's intent confusing even though the reconstruction
+    logic itself doesn't care what the value means."""
+    monkeypatch.setattr("mqtt_bridge.MQTT_HOST", "test-broker")
+    valid_data = {**sample_data, "ph_measurement": 7.4, "chlorine_control_status": FakeEnumValue("Ok", 4)}
+    with patch("mqtt_bridge.mqtt.Client", return_value=MagicMock()):
+        bridge = MqttBridge()
+        bridge.publish_state(valid_data)  # establishes a valid cache first
+
+        invalid_data = {**valid_data, "ph_measurement": 0.0, "chemistry_values_valid": False}
+        ph, status = bridge.resolve_chemistry_reading(invalid_data)
+
+    assert ph == 7.4
+    assert status == ChlorineControlStatuses.Ok
+    assert str(status) == "Ok"
+
+
+def test_resolve_chemistry_reading_passes_through_raw_when_never_seen_a_valid_one(monkeypatch, sample_data):
+    monkeypatch.setattr("mqtt_bridge.MQTT_HOST", "test-broker")
+    with patch("mqtt_bridge.mqtt.Client", return_value=MagicMock()):
+        bridge = MqttBridge()
+
+        invalid_data = {**sample_data, "ph_measurement": 0.0, "chemistry_values_valid": False}
+        ph, status = bridge.resolve_chemistry_reading(invalid_data)
+
+    assert ph == 0.0
+    assert status is invalid_data["chlorine_control_status"]
 
 
 def test_publish_state_persists_valid_reading_to_disk(monkeypatch, tmp_path, sample_data):

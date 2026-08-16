@@ -58,6 +58,7 @@ from datetime import datetime, timezone
 from typing import Awaitable, Callable
 
 import paho.mqtt.client as mqtt
+from pychlorinator.chlorinator_parsers import ChlorineControlStatuses
 
 from config import (
     LAST_KNOWN_GOOD_CACHE_FILE,
@@ -264,6 +265,24 @@ class MqttBridge:
             return
         kind = "action" if msg.topic.endswith("/action") else "setup"
         asyncio.run_coroutine_threadsafe(self._command_handler(kind, payload), self._loop)
+
+    def resolve_chemistry_reading(self, data: dict) -> tuple[float, ChlorineControlStatuses]:
+        """Same hold-last-known-good decision publish_state() applies to
+        the MQTT payload, exposed for other consumers of the raw poll dict
+        - namely app.py's own dashboard and /metrics, which otherwise read
+        data["ph_measurement"]/["chlorine_control_status"] directly and
+        show the device's raw garbage reading during an invalid window
+        even though MQTT/Home Assistant no longer do.
+
+        Returns real pychlorinator types (a ChlorineControlStatuses member,
+        reconstructed from the cached int), not the flattened forms
+        publish_state() builds for MQTT, so callers that pass this
+        straight back into data (as app.py does) keep working with
+        whatever they already expect from a fresh poll - str(status) still
+        gives the plain name, etc."""
+        if data["chemistry_values_valid"] or self._last_valid_ph_measurement is None:
+            return data["ph_measurement"], data["chlorine_control_status"]
+        return self._last_valid_ph_measurement, ChlorineControlStatuses(self._last_valid_chlorine_control_status)
 
     def publish_state(self, data: dict) -> None:
         if not self.enabled:
