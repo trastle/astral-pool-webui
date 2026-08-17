@@ -70,13 +70,32 @@ def test_build_state_payload_is_json_serializable(sample_data):
     json.dumps(build_state_payload(sample_data))
 
 
-def test_bridge_disabled_when_no_broker_configured(monkeypatch):
+def test_bridge_disabled_when_no_broker_configured(monkeypatch, sample_data):
     monkeypatch.setattr("mqtt_bridge.MQTT_HOST", None)
     bridge = MqttBridge()
     assert bridge.enabled is False
     bridge.connect()
-    bridge.publish_state({"mode": "Auto"})
+    bridge.publish_state(sample_data)  # must not raise/attempt to publish
     bridge.disconnect()
+
+
+def test_publish_state_updates_cache_even_when_mqtt_disabled(monkeypatch, sample_data):
+    """The bug this guards against: a standalone (no-MQTT) deployment - a
+    documented, supported mode per the module docstring - previously never
+    advanced self._last_valid_* at all, since publish_state() bailed out
+    before any cache tracking whenever self.enabled was False. That left
+    resolve_chemistry_reading() (used by app.py's web dashboard/metrics,
+    independent of MQTT) with nothing to ever substitute."""
+    monkeypatch.setattr("mqtt_bridge.MQTT_HOST", None)
+    bridge = MqttBridge()
+    assert bridge.enabled is False
+
+    bridge.publish_state(sample_data)
+    assert bridge._last_valid_ph_measurement == sample_data["ph_measurement"]
+
+    invalid_data = {**sample_data, "ph_measurement": 0.0, "chemistry_values_valid": False}
+    ph, status = bridge.resolve_chemistry_reading(invalid_data)
+    assert ph == sample_data["ph_measurement"]
 
 
 def test_bridge_connects_and_publishes_when_broker_configured(monkeypatch, sample_data):
