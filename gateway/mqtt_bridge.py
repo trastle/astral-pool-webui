@@ -299,8 +299,15 @@ class MqttBridge:
         return self._last_valid_ph_measurement, ChlorineControlStatuses(self._last_valid_chlorine_control_status)
 
     def publish_state(self, data: dict) -> None:
-        if not self.enabled:
-            return
+        # The cache tracking/persistence below must run regardless of
+        # self.enabled - resolve_chemistry_reading() (used by app.py's web
+        # dashboard/metrics, independent of MQTT) depends on the same
+        # self._last_valid_* state this method maintains. Bailing out here
+        # early (as this used to) left standalone/no-MQTT deployments -
+        # a documented, supported mode, see the module docstring - with a
+        # cache that never advances past whatever _load_cache_from_disk()
+        # restored at startup, silently defeating the whole feature for
+        # that mode. Only the actual MQTT publish is gated on self.enabled.
         payload = build_state_payload(data)
         if payload["chemistry_values_valid"]:
             changed = (
@@ -327,6 +334,8 @@ class MqttBridge:
             # substitute, so the raw value passes through as-is.
             payload["ph_measurement"] = self._last_valid_ph_measurement
             payload["chlorine_control_status"] = self._last_valid_chlorine_control_status
+        if not self.enabled:
+            return
         try:
             self._client.publish(f"{MQTT_BASE_TOPIC}/state", json.dumps(payload))
         except Exception as exc:  # noqa: BLE001
