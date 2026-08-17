@@ -26,6 +26,31 @@ def test_refresh_now_updates_state_and_publishes_on_success(sample_data):
     fake_bridge.resolve_chemistry_reading.assert_called_once_with(sample_data)
 
 
+def test_refresh_now_keeps_true_raw_reading_separate_from_substituted_data(sample_data):
+    """The "Raw field dump" panel (render_raw_dump, fed by latest_state
+    "raw_data") must show the device's actual reading even while
+    latest_state["data"] carries a held/substituted one - otherwise the one
+    tool built for diagnosing a stuck chemistry_values_valid window shows
+    the same hidden-garbage problem it exists to reveal."""
+    # poll_once returns sample_data itself (mutated in place by refresh_now,
+    # since it's the same object as `data`) - snapshot the true raw values
+    # before running, rather than reading sample_data back afterward.
+    original_ph = sample_data["ph_measurement"]
+    original_chlorine_status = sample_data["chlorine_control_status"]
+    with (
+        patch("app.poll_once", new=AsyncMock(return_value=sample_data)),
+        patch("app.mqtt_bridge") as fake_bridge,
+    ):
+        # Simulate an invalid-chemistry poll where the bridge substitutes a
+        # held reading different from the device's own raw one.
+        fake_bridge.resolve_chemistry_reading.return_value = (7.4, "Ok")
+        asyncio.run(refresh_now())
+
+    assert latest_state["data"]["ph_measurement"] == 7.4
+    assert latest_state["raw_data"]["ph_measurement"] == original_ph
+    assert latest_state["raw_data"]["chlorine_control_status"] == original_chlorine_status
+
+
 def test_refresh_now_records_error_on_poll_failure():
     with (
         patch("app.poll_once", new=AsyncMock(side_effect=RuntimeError("BLE scan failed"))),

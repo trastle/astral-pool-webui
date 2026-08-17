@@ -168,7 +168,7 @@ state_lock = asyncio.Lock()
 # write and a poll can never open simultaneous BLE connections to the
 # device - Bleak/BLE only reliably supports one connection at a time.
 ble_lock = asyncio.Lock()
-latest_state: dict = {"data": None, "error": None, "updated_at": None}
+latest_state: dict = {"data": None, "raw_data": None, "error": None, "updated_at": None}
 mqtt_bridge = MqttBridge()
 
 
@@ -209,7 +209,12 @@ async def refresh_now() -> None:
     try:
         async with ble_lock:
             data = await poll_once()
-        raw_ph = data["ph_measurement"]  # for the log line below - see the comment there
+        # Snapshot before any substitution - the "Raw field dump" panel and
+        # the log line below both need the device's true reading, not the
+        # (possibly held) one `data` ends up with. A shallow copy is enough
+        # since only top-level scalar fields (ph_measurement,
+        # chlorine_control_status) ever get overwritten below.
+        raw_data = dict(data)
         mqtt_bridge.publish_state(data)
         # Same hold-last-known-good substitution MQTT/Home Assistant get,
         # applied here too - otherwise this dashboard and /metrics would
@@ -220,6 +225,7 @@ async def refresh_now() -> None:
         update_metrics(data)
         async with state_lock:
             latest_state["data"] = data
+            latest_state["raw_data"] = raw_data
             latest_state["error"] = None
             latest_state["updated_at"] = time.time()
         g_scrape_success.set(1)
@@ -227,7 +233,7 @@ async def refresh_now() -> None:
         # Logs the device's actual raw reading, not the (possibly
         # substituted) one now in data - this is what diagnosing a bad
         # chemistry_values_valid window needs to see.
-        log.info("Poll OK: mode=%s speed=%s ph=%s", data["mode"], data["pump_speed"], raw_ph)
+        log.info("Poll OK: mode=%s speed=%s ph=%s", data["mode"], data["pump_speed"], raw_data["ph_measurement"])
     except Exception as exc:  # noqa: BLE001 - want to survive and retry
         log.warning("Poll failed: %s", exc)
         async with state_lock:
@@ -484,7 +490,9 @@ def render_raw_dump(data: dict) -> str:
     return f"<details class='panel'><summary>Raw field dump</summary><table>{rows}</table></details>"
 
 
-def render_dashboard(data: dict | None, error: str | None, updated_at: float | None) -> str:
+def render_dashboard(
+    data: dict | None, error: str | None, updated_at: float | None, raw_data: dict | None = None
+) -> str:
     age_seconds = (time.time() - updated_at) if updated_at else None
     age_text = f"{age_seconds:.0f}s ago" if age_seconds is not None else "never"
     stale = age_seconds is not None and age_seconds > POLL_INTERVAL_SECONDS * 2
@@ -505,7 +513,12 @@ def render_dashboard(data: dict | None, error: str | None, updated_at: float | N
             + render_chemistry(data)
             + render_schedule(data["pump_timers"])
             + render_pool_info(data)
-            + render_raw_dump(data)
+            # The dump should show what the device actually said, not the
+            # held/substituted reading `data` may carry during an invalid
+            # chemistry window - see refresh_now()'s raw_data snapshot.
+            # Falls back to `data` when no separate raw snapshot is given
+            # (e.g. existing tests calling this directly).
+            + render_raw_dump(raw_data if raw_data is not None else data)
         )
 
     return (
@@ -644,10 +657,11 @@ async def restrict_to_allowed_networks(request: Request, call_next):
 async def index() -> str:
     async with state_lock:
         data = latest_state["data"]
+        raw_data = latest_state["raw_data"]
         error = latest_state["error"]
         updated_at = latest_state["updated_at"]
 
-    return render_dashboard(data, error, updated_at)
+    return render_dashboard(data, error, updated_at, raw_data=raw_data)
 
 
 @app.get("/help", response_class=HTMLResponse)

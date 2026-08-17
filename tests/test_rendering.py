@@ -113,6 +113,28 @@ def test_raw_dump_escapes_html_in_arbitrary_fields(sample_data):
     assert "&lt;img" in rendered
 
 
+def test_raw_dump_shows_raw_data_not_the_substituted_reading(sample_data):
+    """The raw dump panel must reflect the device's true reading (raw_data)
+    even when `data` carries a held/substituted one - otherwise the panel
+    built for diagnosing a stuck chemistry_values_valid window shows the
+    same hidden-garbage problem it exists to reveal. Uses a substituted
+    value (9.9) distinct from every other field in sample_data (notably
+    ph_control_setpoint, also 7.4 by fixture default) so the assertion
+    can't accidentally match an unrelated row."""
+    substituted_data = dict(sample_data, ph_measurement=9.9)
+    rendered = render_dashboard(data=substituted_data, error=None, updated_at=time.time(), raw_data=sample_data)
+    assert f"<td>ph_measurement</td><td>{sample_data['ph_measurement']}</td>" in rendered
+    assert "<td>ph_measurement</td><td>9.9</td>" not in rendered
+
+
+def test_raw_dump_falls_back_to_data_when_no_raw_data_given(sample_data):
+    """Callers that don't pass raw_data (e.g. simpler test/debug usage)
+    should see `data` itself in the dump, matching this function's
+    pre-existing behavior."""
+    rendered = render_dashboard(data=sample_data, error=None, updated_at=time.time())
+    assert f"<td>ph_measurement</td><td>{sample_data['ph_measurement']}</td>" in rendered
+
+
 def test_error_message_is_escaped_in_banner():
     rendered = render_dashboard(data=None, error="<b>boom</b>", updated_at=1000.0)
     assert "<b>boom</b>" not in rendered
