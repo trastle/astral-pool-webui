@@ -475,6 +475,25 @@ def test_bridge_ignores_corrupt_cache_file_on_startup(monkeypatch, tmp_path):
     assert bridge._last_valid_chlorine_control_status is None
 
 
+def test_bridge_ignores_cache_file_with_invalid_utf8(monkeypatch, tmp_path):
+    """Path.read_text() can raise UnicodeDecodeError - a ValueError
+    subclass, not an OSError/JSONDecodeError/KeyError/TypeError subclass -
+    for a cache file whose bytes aren't valid text. Since MqttBridge() is
+    constructed as a module-level singleton at import time in app.py, an
+    uncaught exception here would crash the entire app at startup, not
+    just fail to load a cache that only exists to make things more
+    reliable."""
+    cache_file = tmp_path / "cache.json"
+    cache_file.write_bytes(b"\xff\xfe not valid utf-8 \x80\x81")
+    monkeypatch.setattr("mqtt_bridge.MQTT_HOST", "test-broker")
+    monkeypatch.setattr("mqtt_bridge.LAST_KNOWN_GOOD_CACHE_FILE", cache_file)
+    with patch("mqtt_bridge.mqtt.Client", return_value=MagicMock()):
+        bridge = MqttBridge()  # must not raise
+
+    assert bridge._last_valid_ph_measurement is None
+    assert bridge._last_valid_chlorine_control_status is None
+
+
 def test_bridge_ignores_cache_file_with_an_invalid_chlorine_status(monkeypatch, tmp_path):
     """The bug this guards against: resolve_chemistry_reading() reconstructs
     a real ChlorineControlStatuses member from the cached int on every
