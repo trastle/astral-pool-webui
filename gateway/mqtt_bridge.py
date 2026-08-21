@@ -291,41 +291,68 @@ class MqttBridge:
         kind = "action" if msg.topic.endswith("/action") else "setup"
         asyncio.run_coroutine_threadsafe(self._command_handler(kind, payload), self._loop)
 
+    def _record_if_valid(self, data: dict) -> None:
+        """Updates the last known-good cache whenever the device reports
+        chemistry_values_valid=True, persisting to disk if it changed.
+        Called from resolve_chemistry_reading() below so every consumer
+        (MQTT publish, the web dashboard/metrics) keeps the cache fresh
+        without each needing its own copy of this logic - previously
+        publish_state() and resolve_chemistry_reading() each independently
+        re-derived "is this valid, and what do we do about it", which
+        could silently drift out of sync (e.g. a future rule change edited
+        in one but not the other)."""
+        if not data["chemistry_values_valid"]:
+            return
+        ph = data["ph_measurement"]
+        status = data["chlorine_control_status"].value
+        changed = (
+            ph != self._last_valid_ph_measurement
+            or status != self._last_valid_chlorine_control_status
+        )
+        self._last_valid_ph_measurement = ph
+        self._last_valid_chlorine_control_status = status
+        if changed:
+            self._save_cache_to_disk()
+
     def resolve_chemistry_reading(self, data: dict) -> tuple[float, ChlorineControlStatuses]:
-        """Same hold-last-known-good decision publish_state() applies to
-        the MQTT payload, exposed for other consumers of the raw poll dict
-        - namely app.py's own dashboard and /metrics, which otherwise read
+        """The hold-last-known-good decision - the device flags its own
+        pH/ORP readings as not-yet-trustworthy via chemistry_values_valid
+        (seen for ~8h after an overnight power cycle, while the pump ran a
+        priming cycle) but keeps returning a raw reading regardless -
+        observed: a flat, physically-impossible pH of 0.0 for that whole
+        window. Used by publish_state() below (for MQTT) and by app.py's
+        own dashboard/metrics, which would otherwise read
         data["ph_measurement"]/["chlorine_control_status"] directly and
-        show the device's raw garbage reading during an invalid window
-        even though MQTT/Home Assistant no longer do.
+        show that same raw garbage during an invalid window.
+
+        If we've never seen a valid reading at all (fresh start), there's
+        nothing better to substitute, so the raw value passes through as-is.
 
         Returns real pychlorinator types (a ChlorineControlStatuses member,
-        reconstructed from the cached int), not the flattened forms
-        publish_state() builds for MQTT, so callers that pass this
-        straight back into data (as app.py does) keep working with
-        whatever they already expect from a fresh poll - str(status) still
-        gives the plain name, etc."""
+        reconstructed from the cached int), not the flattened forms MQTT
+        needs, so callers that pass this straight back into data (as
+        app.py does) keep working with whatever they already expect from
+        a fresh poll - str(status) still gives the plain name, etc."""
+        self._record_if_valid(data)
         if data["chemistry_values_valid"] or self._last_valid_ph_measurement is None:
             return data["ph_measurement"], data["chlorine_control_status"]
         return self._last_valid_ph_measurement, ChlorineControlStatuses(self._last_valid_chlorine_control_status)
 
     def publish_state(self, data: dict) -> None:
-        # The cache tracking/persistence below must run regardless of
-        # self.enabled - resolve_chemistry_reading() (used by app.py's web
-        # dashboard/metrics, independent of MQTT) depends on the same
-        # self._last_valid_* state this method maintains. Bailing out here
-        # early (as this used to) left standalone/no-MQTT deployments -
-        # a documented, supported mode, see the module docstring - with a
-        # cache that never advances past whatever _load_cache_from_disk()
-        # restored at startup, silently defeating the whole feature for
-        # that mode. Only the actual MQTT publish is gated on self.enabled.
+        # Cache tracking (inside resolve_chemistry_reading() below) must
+        # run regardless of self.enabled - it's used by app.py's web
+        # dashboard/metrics independent of MQTT too. Bailing out early (as
+        # this used to) left standalone/no-MQTT deployments - a documented,
+        # supported mode, see the module docstring - with a cache that
+        # never advances, silently defeating the whole feature for that
+        # mode. Only the actual MQTT publish is gated on self.enabled.
         #
-        # Building the payload and updating the cache both need their own
-        # try/except (distinct from the publish try/except below) - before
-        # the hold-last-known-good feature existed, build_state_payload()
-        # ran inside the same try as the publish call, so a malformed/
-        # unexpected `data` shape (e.g. a pychlorinator field's type
-        # changing) was caught and logged right here. Leaving this
+        # Building the payload and resolving the reading both need their
+        # own try/except (distinct from the publish try/except below) -
+        # before the hold-last-known-good feature existed, build_state_
+        # payload() ran inside the same try as the publish call, so a
+        # malformed/unexpected `data` shape (e.g. a pychlorinator field's
+        # type changing) was caught and logged right here. Leaving this
         # uncaught would instead propagate into app.py's refresh_now(),
         # turning an isolated "couldn't build/publish state" warning into
         # a full "Poll failed" that also skips update_metrics() and marks
@@ -333,31 +360,9 @@ class MqttBridge:
         # succeeded.
         try:
             payload = build_state_payload(data)
-            if payload["chemistry_values_valid"]:
-                changed = (
-                    payload["ph_measurement"] != self._last_valid_ph_measurement
-                    or payload["chlorine_control_status"] != self._last_valid_chlorine_control_status
-                )
-                self._last_valid_ph_measurement = payload["ph_measurement"]
-                self._last_valid_chlorine_control_status = payload["chlorine_control_status"]
-                if changed:
-                    self._save_cache_to_disk()
-            elif self._last_valid_ph_measurement is not None:
-                # The device flags its own pH/ORP readings as not-yet-trustworthy
-                # via chemistry_values_valid (seen for ~8h after an overnight
-                # power cycle, while the pump ran a priming cycle) but keeps
-                # returning a raw reading regardless - observed: a flat,
-                # physically-impossible pH of 0.0 for that whole window, which
-                # got faithfully recorded as real history downstream. Hold the
-                # last known-good values instead of relaying junk. Everything
-                # else in the payload - including chemistry_values_valid/current
-                # themselves - still publishes live every poll, so the "not
-                # valid yet" state remains visible downstream, just without
-                # clobbering the readings with garbage. If we've never seen a
-                # valid reading at all (fresh start), there's nothing better to
-                # substitute, so the raw value passes through as-is.
-                payload["ph_measurement"] = self._last_valid_ph_measurement
-                payload["chlorine_control_status"] = self._last_valid_chlorine_control_status
+            ph, status = self.resolve_chemistry_reading(data)
+            payload["ph_measurement"] = ph
+            payload["chlorine_control_status"] = status.value
         except Exception as exc:  # noqa: BLE001
             log.warning("Failed to build chlorinator state payload: %s", exc)
             return
