@@ -1,5 +1,7 @@
 import asyncio
 import json
+import time
+from datetime import datetime, timedelta, timezone
 from unittest.mock import MagicMock, patch
 
 from pychlorinator.chlorinator_parsers import ChlorineControlStatuses
@@ -379,6 +381,42 @@ def test_resolve_chemistry_reading_passes_through_raw_when_never_seen_a_valid_on
     assert status is invalid_data["chlorine_control_status"]
 
 
+def test_resolve_chemistry_reading_still_substitutes_a_cache_within_max_age(monkeypatch, sample_data):
+    """A cache confirmed valid within the last MAX_CACHE_AGE_SECONDS
+    (48h) must still be trusted - this isn't just "was it ever cached",
+    it's "was it cached recently enough"."""
+    monkeypatch.setattr("mqtt_bridge.MQTT_HOST", "test-broker")
+    with patch("mqtt_bridge.mqtt.Client", return_value=MagicMock()):
+        bridge = MqttBridge()
+        bridge.publish_state(sample_data)  # establishes a fresh, valid cache
+        bridge._last_valid_seen_at = time.time() - 47 * 3600  # 47h ago - still within the 48h cap
+
+        invalid_data = {**sample_data, "ph_measurement": 0.0, "chemistry_values_valid": False}
+        ph, status = bridge.resolve_chemistry_reading(invalid_data)
+
+    assert ph == sample_data["ph_measurement"]
+    assert status.value == sample_data["chlorine_control_status"].value
+
+
+def test_resolve_chemistry_reading_stops_trusting_a_cache_older_than_max_age(monkeypatch, sample_data):
+    """The bug this guards against: without an expiry, a genuine permanent
+    sensor fault (chemistry_values_valid never recovering, not just the
+    device's documented ~8h settling window) would have the gateway
+    confidently republishing an arbitrarily old reading forever, masking
+    the fault instead of ever surfacing it."""
+    monkeypatch.setattr("mqtt_bridge.MQTT_HOST", "test-broker")
+    with patch("mqtt_bridge.mqtt.Client", return_value=MagicMock()):
+        bridge = MqttBridge()
+        bridge.publish_state(sample_data)  # establishes a cache
+        bridge._last_valid_seen_at = time.time() - 49 * 3600  # 49h ago - past the 48h cap
+
+        invalid_data = {**sample_data, "ph_measurement": 0.0, "chemistry_values_valid": False}
+        ph, status = bridge.resolve_chemistry_reading(invalid_data)
+
+    assert ph == 0.0
+    assert status is invalid_data["chlorine_control_status"]
+
+
 def test_publish_state_persists_valid_reading_to_disk(monkeypatch, tmp_path, sample_data):
     """Every field the cache exists to protect - only pH and chlorine
     status (see mqtt_bridge.py's module docstring on LAST_KNOWN_GOOD_CACHE_FILE) - plus a
@@ -428,7 +466,9 @@ def test_bridge_restores_last_known_good_reading_from_disk_on_startup(monkeypatc
     cache_file.write_text(json.dumps({
         "ph_measurement": 7.3,
         "chlorine_control_status": 1,
-        "last_changed": "2026-08-16T08:00:00+00:00",
+        # Recent (not a fixed past date) - must stay well inside
+        # MAX_CACHE_AGE_SECONDS regardless of when this test actually runs.
+        "last_changed": (datetime.now(timezone.utc) - timedelta(hours=1)).isoformat(),
     }))
     monkeypatch.setattr("mqtt_bridge.MQTT_HOST", "test-broker")
     monkeypatch.setattr("mqtt_bridge.LAST_KNOWN_GOOD_CACHE_FILE", cache_file)
@@ -445,6 +485,31 @@ def test_bridge_restores_last_known_good_reading_from_disk_on_startup(monkeypatc
         payload = json.loads(fake_client.publish.call_args[0][1])
         assert payload["ph_measurement"] == 7.3
         assert payload["chlorine_control_status"] == 1
+
+
+def test_bridge_does_not_substitute_a_cache_already_expired_on_disk(monkeypatch, tmp_path, sample_data):
+    """A cache file left over from a genuinely long outage (the gateway
+    down, or chemistry_values_valid never recovering) shouldn't be trusted
+    just because it successfully loaded - MAX_CACHE_AGE_SECONDS applies
+    whether the cache came from this process's own polling or was restored
+    from a stale disk file."""
+    cache_file = tmp_path / "cache.json"
+    cache_file.write_text(json.dumps({
+        "ph_measurement": 7.3,
+        "chlorine_control_status": 1,
+        "last_changed": (datetime.now(timezone.utc) - timedelta(hours=49)).isoformat(),
+    }))
+    monkeypatch.setattr("mqtt_bridge.MQTT_HOST", "test-broker")
+    monkeypatch.setattr("mqtt_bridge.LAST_KNOWN_GOOD_CACHE_FILE", cache_file)
+    fake_client = MagicMock()
+    with patch("mqtt_bridge.mqtt.Client", return_value=fake_client):
+        bridge = MqttBridge()
+
+        invalid_data = {**sample_data, "ph_measurement": 0.0, "chemistry_values_valid": False}
+        bridge.publish_state(invalid_data)
+        payload = json.loads(fake_client.publish.call_args[0][1])
+
+    assert payload["ph_measurement"] == 0.0
 
 
 def test_bridge_ignores_missing_cache_file_on_startup(monkeypatch, tmp_path):
