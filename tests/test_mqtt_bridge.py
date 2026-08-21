@@ -475,6 +475,29 @@ def test_bridge_ignores_corrupt_cache_file_on_startup(monkeypatch, tmp_path):
     assert bridge._last_valid_chlorine_control_status is None
 
 
+def test_bridge_ignores_cache_file_with_an_invalid_chlorine_status(monkeypatch, tmp_path):
+    """The bug this guards against: resolve_chemistry_reading() reconstructs
+    a real ChlorineControlStatuses member from the cached int on every
+    invalid-chemistry poll - an out-of-range int (e.g. from a stale/hand-
+    edited/version-mismatched cache file) would raise deep inside a poll
+    cycle instead of here, at load time. Rejecting it now means a bad
+    cache behaves like no cache, not a recurring failure every poll for
+    as long as chemistry stays invalid."""
+    cache_file = tmp_path / "cache.json"
+    cache_file.write_text(json.dumps({
+        "ph_measurement": 7.3,
+        "chlorine_control_status": 99,  # not a real ChlorineControlStatuses member
+        "last_changed": "2026-08-16T05:00:00+00:00",
+    }))
+    monkeypatch.setattr("mqtt_bridge.MQTT_HOST", "test-broker")
+    monkeypatch.setattr("mqtt_bridge.LAST_KNOWN_GOOD_CACHE_FILE", cache_file)
+    with patch("mqtt_bridge.mqtt.Client", return_value=MagicMock()):
+        bridge = MqttBridge()  # must not raise
+
+    assert bridge._last_valid_ph_measurement is None
+    assert bridge._last_valid_chlorine_control_status is None
+
+
 def test_publish_state_failure_is_swallowed(monkeypatch, sample_data):
     monkeypatch.setattr("mqtt_bridge.MQTT_HOST", "test-broker")
     fake_client = MagicMock()

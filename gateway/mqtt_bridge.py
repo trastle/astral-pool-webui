@@ -199,15 +199,26 @@ class MqttBridge:
         cache that only ever exists to make things more reliable."""
         try:
             cached = json.loads(LAST_KNOWN_GOOD_CACHE_FILE.read_text())
-            self._last_valid_ph_measurement = cached["ph_measurement"]
-            self._last_valid_chlorine_control_status = cached["chlorine_control_status"]
+            ph = cached["ph_measurement"]
+            chlorine_status = cached["chlorine_control_status"]
+            # Validate before trusting it - resolve_chemistry_reading()
+            # reconstructs a real ChlorineControlStatuses member from this
+            # int on every invalid-chemistry poll; if a stale/hand-edited/
+            # version-mismatched cache file held an int that isn't a real
+            # member, that reconstruction would raise deep inside a poll
+            # cycle instead of here, at load time, where a bad cache is
+            # already expected and handled the same as any other corrupt
+            # file - "nothing cached yet" - rather than a real fault.
+            ChlorineControlStatuses(chlorine_status)
+            self._last_valid_ph_measurement = ph
+            self._last_valid_chlorine_control_status = chlorine_status
             log.info(
                 "Restored last known-good reading from %s (last changed %s)",
                 LAST_KNOWN_GOOD_CACHE_FILE, cached.get("last_changed"),
             )
         except FileNotFoundError:
             pass
-        except (json.JSONDecodeError, KeyError, TypeError, OSError) as exc:
+        except (json.JSONDecodeError, KeyError, TypeError, ValueError, OSError) as exc:
             log.warning("Ignoring unreadable last known-good cache at %s: %s", LAST_KNOWN_GOOD_CACHE_FILE, exc)
 
     def _save_cache_to_disk(self) -> None:
