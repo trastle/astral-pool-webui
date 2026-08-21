@@ -68,7 +68,7 @@ from config import (
     MQTT_PORT,
     MQTT_USERNAME,
 )
-from quirks import decode_pool_volume
+from quirks import decode_pool_volume, format_time_of_day
 
 log = logging.getLogger("mqtt_bridge")
 
@@ -121,6 +121,20 @@ def build_state_payload(data: dict) -> dict:
         "lowest_ph_measured": data["lowest_ph_measured"],
         "highest_orp_measured": data["highest_orp_measured"],
         "lowest_orp_measured": data["lowest_orp_measured"],
+        # Fixed 4 timer slots (NUMBER_OF_PUMP_TIMERS_SUPPORTED in
+        # pychlorinator), read-only for now - speed_level follows the same
+        # raw-int convention as pump_speed/default_manual_on_speed above
+        # (same SpeedLevels enum), reconstructed via SpeedLevels(value) on
+        # the fork side.
+        "pump_timers": [
+            {
+                "start_time": format_time_of_day(timer.start_time),
+                "stop_time": format_time_of_day(timer.stop_time),
+                "enabled": bool(timer.enabled),
+                "speed_level": timer.speed_level.value,
+            }
+            for timer in data["pump_timers"]
+        ],
     }
 
 
