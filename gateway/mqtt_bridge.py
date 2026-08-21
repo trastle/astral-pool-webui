@@ -75,6 +75,15 @@ log = logging.getLogger("mqtt_bridge")
 # handler(kind: "action" | "setup", payload: dict) -> None (async)
 CommandHandler = Callable[[str, dict], Awaitable[None]]
 
+# How long the last known-good reading is trusted for once chemistry_values
+# stops being confirmed valid. Without this, a genuine permanent sensor
+# fault (not just the device's documented ~8h post-power-cycle settling
+# window) would have the gateway confidently republishing an arbitrarily
+# old reading as if it were current, forever - masking the fault instead
+# of ever surfacing it. See resolve_chemistry_reading() for where this is
+# enforced.
+MAX_CACHE_AGE_SECONDS = 48 * 60 * 60
+
 
 def build_state_payload(data: dict) -> dict:
     """Flatten/decode the pychlorinator state dict into a plain JSON-safe
@@ -177,6 +186,14 @@ class MqttBridge:
         # memory for this process's lifetime.
         self._last_valid_ph_measurement: float | None = None
         self._last_valid_chlorine_control_status: int | None = None
+        # When the cache was last confirmed accurate - i.e. the last time
+        # chemistry_values_valid read True, updated on every valid poll
+        # regardless of whether the reading itself changed (not to be
+        # confused with the disk cache's own "last_changed" timestamp,
+        # which only advances when the value does - see
+        # resolve_chemistry_reading()/_record_if_valid() for why that
+        # distinction matters for MAX_CACHE_AGE_SECONDS).
+        self._last_valid_seen_at: float | None = None
         self._load_cache_from_disk()
         if not self.enabled:
             log.info("MQTT_HOST not set - MQTT bridge disabled")
@@ -210,8 +227,18 @@ class MqttBridge:
             # already expected and handled the same as any other corrupt
             # file - "nothing cached yet" - rather than a real fault.
             ChlorineControlStatuses(chlorine_status)
+            # The disk timestamp only advances when the value changes (see
+            # _save_cache_to_disk()), so it can understate how recently this
+            # was actually confirmed valid if the reading had been stable
+            # for a while before the process last restarted. That's fine -
+            # it just means MAX_CACHE_AGE_SECONDS may start counting down a
+            # bit earlier than a perfectly-accurate timestamp would, never
+            # later, which is the safe direction to be wrong in for a
+            # feature about not trusting stale data too long.
+            seen_at = datetime.fromisoformat(cached["last_changed"]).timestamp()
             self._last_valid_ph_measurement = ph
             self._last_valid_chlorine_control_status = chlorine_status
+            self._last_valid_seen_at = seen_at
             log.info(
                 "Restored last known-good reading from %s (last changed %s)",
                 LAST_KNOWN_GOOD_CACHE_FILE, cached.get("last_changed"),
@@ -311,6 +338,13 @@ class MqttBridge:
         )
         self._last_valid_ph_measurement = ph
         self._last_valid_chlorine_control_status = status
+        # Every valid poll counts as "confirmed", not just ones where the
+        # value changed - a stable, unchanging-but-continuously-reconfirmed
+        # reading must not look stale just because the number itself hasn't
+        # moved recently. In-memory only (no disk write cost) - see
+        # _load_cache_from_disk() for how this gets reconstructed after a
+        # restart.
+        self._last_valid_seen_at = time.time()
         if changed:
             self._save_cache_to_disk()
 
@@ -325,8 +359,12 @@ class MqttBridge:
         data["ph_measurement"]/["chlorine_control_status"] directly and
         show that same raw garbage during an invalid window.
 
-        If we've never seen a valid reading at all (fresh start), there's
-        nothing better to substitute, so the raw value passes through as-is.
+        If we've never seen a valid reading at all (fresh start), or the
+        cache has gone past MAX_CACHE_AGE_SECONDS since it was last
+        confirmed valid (a genuine permanent fault, not just the device's
+        documented settling window), there's nothing trustworthy to
+        substitute, so the raw value passes through as-is rather than
+        confidently republishing an arbitrarily old reading forever.
 
         Returns real pychlorinator types (a ChlorineControlStatuses member,
         reconstructed from the cached int), not the flattened forms MQTT
@@ -334,7 +372,11 @@ class MqttBridge:
         app.py does) keep working with whatever they already expect from
         a fresh poll - str(status) still gives the plain name, etc."""
         self._record_if_valid(data)
-        if data["chemistry_values_valid"] or self._last_valid_ph_measurement is None:
+        cache_expired = (
+            self._last_valid_seen_at is None
+            or time.time() - self._last_valid_seen_at > MAX_CACHE_AGE_SECONDS
+        )
+        if data["chemistry_values_valid"] or cache_expired:
             return data["ph_measurement"], data["chlorine_control_status"]
         return self._last_valid_ph_measurement, ChlorineControlStatuses(self._last_valid_chlorine_control_status)
 
