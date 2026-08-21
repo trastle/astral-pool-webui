@@ -484,6 +484,22 @@ def test_publish_state_failure_is_swallowed(monkeypatch, sample_data):
         bridge.publish_state(sample_data)  # must not raise
 
 
+def test_publish_state_swallows_payload_build_failure(monkeypatch):
+    """A malformed/unexpected data shape (e.g. a pychlorinator field
+    missing or changing type) must not propagate out of publish_state() -
+    that would surface in app.py's refresh_now() as a full "Poll failed"
+    (skipping update_metrics(), marking the whole poll as errored) instead
+    of the isolated "couldn't build state payload" warning this is meant
+    to be, even though the BLE read itself succeeded."""
+    monkeypatch.setattr("mqtt_bridge.MQTT_HOST", "test-broker")
+    fake_client = MagicMock()
+    with patch("mqtt_bridge.mqtt.Client", return_value=fake_client):
+        bridge = MqttBridge()
+        bridge.publish_state({"mode": "Auto"})  # missing almost every field build_state_payload needs
+
+    fake_client.publish.assert_not_called()
+
+
 def test_disconnect_failure_is_swallowed(monkeypatch):
     monkeypatch.setattr("mqtt_bridge.MQTT_HOST", "test-broker")
     fake_client = MagicMock()
