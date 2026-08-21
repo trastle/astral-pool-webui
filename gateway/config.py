@@ -69,6 +69,12 @@ MQTT_PASSWORD = _str_or_none(settings.get("mqtt.password"))
 MQTT_BASE_TOPIC = _str_or_none(settings.get("mqtt.base_topic")) or f"chlorinator/{DEVICE_NAME.lower()}"
 # Resolved relative to this file (not the working directory), same as
 # settings_files above - see mqtt_bridge.py's MqttBridge for what this is.
-LAST_KNOWN_GOOD_CACHE_FILE = Path(__file__).parent / str(
-    settings.get("mqtt.last_known_good_cache_file", "last_known_good_readings.json")
+# Goes through _str_or_none() + `or` (same pattern as MQTT_BASE_TOPIC
+# above), not settings.get()'s own default - Dynaconf's default only
+# applies when the key is entirely absent, not when it's present but
+# left blank (the exact "leave blank for default" convention base_topic
+# uses two lines up) - that would otherwise resolve to a literal path
+# ending in "None" instead of the intended default filename.
+LAST_KNOWN_GOOD_CACHE_FILE = Path(__file__).parent / (
+    _str_or_none(settings.get("mqtt.last_known_good_cache_file")) or "last_known_good_readings.json"
 )
