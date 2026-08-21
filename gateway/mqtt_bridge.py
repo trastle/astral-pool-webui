@@ -308,32 +308,49 @@ class MqttBridge:
         # cache that never advances past whatever _load_cache_from_disk()
         # restored at startup, silently defeating the whole feature for
         # that mode. Only the actual MQTT publish is gated on self.enabled.
-        payload = build_state_payload(data)
-        if payload["chemistry_values_valid"]:
-            changed = (
-                payload["ph_measurement"] != self._last_valid_ph_measurement
-                or payload["chlorine_control_status"] != self._last_valid_chlorine_control_status
-            )
-            self._last_valid_ph_measurement = payload["ph_measurement"]
-            self._last_valid_chlorine_control_status = payload["chlorine_control_status"]
-            if changed:
-                self._save_cache_to_disk()
-        elif self._last_valid_ph_measurement is not None:
-            # The device flags its own pH/ORP readings as not-yet-trustworthy
-            # via chemistry_values_valid (seen for ~8h after an overnight
-            # power cycle, while the pump ran a priming cycle) but keeps
-            # returning a raw reading regardless - observed: a flat,
-            # physically-impossible pH of 0.0 for that whole window, which
-            # got faithfully recorded as real history downstream. Hold the
-            # last known-good values instead of relaying junk. Everything
-            # else in the payload - including chemistry_values_valid/current
-            # themselves - still publishes live every poll, so the "not
-            # valid yet" state remains visible downstream, just without
-            # clobbering the readings with garbage. If we've never seen a
-            # valid reading at all (fresh start), there's nothing better to
-            # substitute, so the raw value passes through as-is.
-            payload["ph_measurement"] = self._last_valid_ph_measurement
-            payload["chlorine_control_status"] = self._last_valid_chlorine_control_status
+        #
+        # Building the payload and updating the cache both need their own
+        # try/except (distinct from the publish try/except below) - before
+        # the hold-last-known-good feature existed, build_state_payload()
+        # ran inside the same try as the publish call, so a malformed/
+        # unexpected `data` shape (e.g. a pychlorinator field's type
+        # changing) was caught and logged right here. Leaving this
+        # uncaught would instead propagate into app.py's refresh_now(),
+        # turning an isolated "couldn't build/publish state" warning into
+        # a full "Poll failed" that also skips update_metrics() and marks
+        # the whole poll as failed, even though the BLE read itself
+        # succeeded.
+        try:
+            payload = build_state_payload(data)
+            if payload["chemistry_values_valid"]:
+                changed = (
+                    payload["ph_measurement"] != self._last_valid_ph_measurement
+                    or payload["chlorine_control_status"] != self._last_valid_chlorine_control_status
+                )
+                self._last_valid_ph_measurement = payload["ph_measurement"]
+                self._last_valid_chlorine_control_status = payload["chlorine_control_status"]
+                if changed:
+                    self._save_cache_to_disk()
+            elif self._last_valid_ph_measurement is not None:
+                # The device flags its own pH/ORP readings as not-yet-trustworthy
+                # via chemistry_values_valid (seen for ~8h after an overnight
+                # power cycle, while the pump ran a priming cycle) but keeps
+                # returning a raw reading regardless - observed: a flat,
+                # physically-impossible pH of 0.0 for that whole window, which
+                # got faithfully recorded as real history downstream. Hold the
+                # last known-good values instead of relaying junk. Everything
+                # else in the payload - including chemistry_values_valid/current
+                # themselves - still publishes live every poll, so the "not
+                # valid yet" state remains visible downstream, just without
+                # clobbering the readings with garbage. If we've never seen a
+                # valid reading at all (fresh start), there's nothing better to
+                # substitute, so the raw value passes through as-is.
+                payload["ph_measurement"] = self._last_valid_ph_measurement
+                payload["chlorine_control_status"] = self._last_valid_chlorine_control_status
+        except Exception as exc:  # noqa: BLE001
+            log.warning("Failed to build chlorinator state payload: %s", exc)
+            return
+
         if not self.enabled:
             return
         try:
