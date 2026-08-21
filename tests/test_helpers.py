@@ -10,7 +10,7 @@ from app import (
     mode_level,
     ph_level,
 )
-from quirks import decode_pool_volume
+from quirks import decode_pool_volume, format_time_of_day
 
 
 def test_decode_pool_volume_decodes_little_endian_bytes():
@@ -19,6 +19,12 @@ def test_decode_pool_volume_decodes_little_endian_bytes():
 
 def test_decode_pool_volume_passes_through_non_bytes():
     assert decode_pool_volume(3000) == 3000
+
+
+def test_format_time_of_day_formats_as_hh_mm_ss():
+    assert format_time_of_day(datetime.timedelta(hours=10)) == "10:00:00"
+    assert format_time_of_day(datetime.timedelta(hours=14, minutes=5, seconds=30)) == "14:05:30"
+    assert format_time_of_day(datetime.timedelta(hours=0, minutes=0)) == "00:00:00"
 
 
 def test_humanize_inserts_spaces_between_words():

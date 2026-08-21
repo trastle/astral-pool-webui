@@ -49,6 +49,19 @@ def test_build_state_payload_includes_extended_fields(sample_data):
     assert payload["chlorine_control_type"] == "Automatic"
     assert payload["minimum_orp_setpoint"] == 200
     assert payload["maximum_orp_setpoint"] == 800
+
+
+def test_build_state_payload_flattens_pump_timers(sample_data):
+    payload = build_state_payload(sample_data)
+    assert len(payload["pump_timers"]) == 4
+    first = payload["pump_timers"][0]
+    assert first == {
+        "start_time": "10:00:00",
+        "stop_time": "14:00:00",
+        "enabled": True,
+        "speed_level": 3,  # AI, per pychlorinator.SpeedLevels
+    }
+    assert all(isinstance(t["start_time"], str) for t in payload["pump_timers"])
     assert payload["highest_ph_measured"] == 9.4
     assert payload["lowest_orp_measured"] == 100
 

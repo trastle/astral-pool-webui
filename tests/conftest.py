@@ -28,6 +28,13 @@ class FakeEnumValue(str):
         return obj
 
 
+# Mirrors pychlorinator.chlorinator_parsers.SpeedLevels' real int values
+# (Low=0, Medium=1, High=2, AI=3, NotSet=-1) so make_timer's fake
+# speed_level behaves like the real enum for code that reads .value (e.g.
+# the MQTT bridge), not just .name (e.g. the dashboard's own rendering).
+_SPEED_LEVEL_VALUES = {"Low": 0, "Medium": 1, "High": 2, "AI": 3, "NotSet": -1}
+
+
 def make_timer(start_hms, stop_hms, enabled, speed_name):
     def to_td(hms):
         hours, minutes = hms
@@ -37,7 +44,7 @@ def make_timer(start_hms, stop_hms, enabled, speed_name):
         start_time=to_td(start_hms),
         stop_time=to_td(stop_hms),
         enabled=enabled,
-        speed_level=SimpleNamespace(name=speed_name),
+        speed_level=SimpleNamespace(name=speed_name, value=_SPEED_LEVEL_VALUES[speed_name]),
     )
 
 
