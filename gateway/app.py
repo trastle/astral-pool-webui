@@ -59,6 +59,15 @@ log = logging.getLogger("chlorinator_exporter")
 # device time to apply the change.
 COMMAND_SETTLE_DELAY_SECONDS = 2
 
+# The BLE connection to this device can fail a scan or a write outright
+# (e.g. "device disappeared") with no automatic retry until this - a
+# command sent from Home Assistant would just be dropped, leaving the
+# entity's state stuck at its old value until someone noticed and re-sent
+# it by hand (observed 2026-09-18, over an hour before it was caught - see
+# home-assistant/pool/session-notes-2026-09-18.md in the docs repo).
+COMMAND_RETRY_ATTEMPTS = 3
+COMMAND_RETRY_DELAY_SECONDS = 15
+
 # Plain numeric fields from the pychlorinator state dict, copied straight
 # into a Gauge of the same rough shape.
 NUMERIC_FIELDS = {
@@ -249,7 +258,11 @@ async def poll_loop() -> None:
 
 
 async def handle_mqtt_command(kind: str, payload: dict) -> None:
-    """Execute a real pychlorinator write against the device.
+    """Execute a real pychlorinator write against the device, retrying on
+    failure up to COMMAND_RETRY_ATTEMPTS times, COMMAND_RETRY_DELAY_SECONDS
+    apart - see that constant's comment for why. Re-scans and reconnects
+    from scratch each attempt rather than assuming a stale device handle
+    from a failed attempt is still good.
 
     kind is "action" (payload: {"action": <int>[, extra kwargs like
     period_minutes]}, matching pychlorinator's ChlorinatorActions enum) or
@@ -257,27 +270,49 @@ async def handle_mqtt_command(kind: str, payload: dict) -> None:
     {"ph_control_setpoint": 7.4}) - the exact shapes the
     astralpool_chlorinator fork's mqtt_client.py publishes.
     """
-    async with ble_lock:
-        try:
-            device = await BleakScanner.find_device_by_name(DEVICE_NAME, timeout=15)
-            if device is None:
-                log.warning("MQTT %s command received but device not found - ignoring", kind)
-                return
-            api = ChlorinatorAPI(ble_device=device, access_code=ACCESS_CODE)
-            if kind == "action":
-                action = ChlorinatorActions(payload["action"])
-                kwargs = {k: v for k, v in payload.items() if k != "action"}
-                log.info("Executing MQTT action: %s %s", action, kwargs)
-                await api.async_write_action(action, **kwargs)
-            elif kind == "setup":
-                log.info("Executing MQTT setup write: %s", payload)
-                await api.async_write_setup(**payload)
-            else:
-                log.warning("Unknown MQTT command kind: %s", kind)
-                return
-        except Exception as exc:  # noqa: BLE001 - never let a bad command crash the app
-            log.warning("MQTT %s command failed: %s", kind, exc)
-            return
+    if kind not in ("action", "setup"):
+        log.warning("Unknown MQTT command kind: %s", kind)
+        return
+
+    last_exc: Exception | None = None
+    for attempt in range(1, COMMAND_RETRY_ATTEMPTS + 1):
+        async with ble_lock:
+            try:
+                device = await BleakScanner.find_device_by_name(DEVICE_NAME, timeout=15)
+                if device is None:
+                    raise RuntimeError(f"{DEVICE_NAME} not found by BLE scan")
+                api = ChlorinatorAPI(ble_device=device, access_code=ACCESS_CODE)
+                if kind == "action":
+                    action = ChlorinatorActions(payload["action"])
+                    kwargs = {k: v for k, v in payload.items() if k != "action"}
+                    log.info(
+                        "Executing MQTT action: %s %s (attempt %d/%d)",
+                        action, kwargs, attempt, COMMAND_RETRY_ATTEMPTS,
+                    )
+                    await api.async_write_action(action, **kwargs)
+                else:
+                    log.info(
+                        "Executing MQTT setup write: %s (attempt %d/%d)",
+                        payload, attempt, COMMAND_RETRY_ATTEMPTS,
+                    )
+                    await api.async_write_setup(**payload)
+                last_exc = None
+                break
+            except Exception as exc:  # noqa: BLE001 - retry-and-log, never let a bad command crash the app
+                last_exc = exc
+                log.warning(
+                    "MQTT %s command failed (attempt %d/%d): %s",
+                    kind, attempt, COMMAND_RETRY_ATTEMPTS, exc,
+                )
+        if last_exc is not None and attempt < COMMAND_RETRY_ATTEMPTS:
+            await asyncio.sleep(COMMAND_RETRY_DELAY_SECONDS)
+
+    if last_exc is not None:
+        log.error(
+            "MQTT %s command failed after %d attempts, giving up: %s",
+            kind, COMMAND_RETRY_ATTEMPTS, last_exc,
+        )
+        return
     # Give the device a moment to apply the change before reading it back,
     # then refresh outside the lock (refresh_now() takes it itself). A
     # module-level constant (not a bare asyncio.sleep(2) call) so tests can
